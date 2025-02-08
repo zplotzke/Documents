@@ -1,136 +1,125 @@
 classdef PlatoonVisualizer < handle
     % PLATOONVISUALIZER Visualization class for truck platoon simulation
     %
+    % This class handles the real-time visualization of the truck platoon,
+    % including optional video recording capabilities.
+    %
     % Author: zplotzke
-    % Created: 2025-02-08 02:54:41 UTC
+    % Created: 2025-02-08 06:05:02 UTC
     
-    properties (Access = private)
-        config
-        figure
-        truckPositionsAxis
-        velocityAxis
-        accelerationAxis
-        jerkAxis
-        videoWriter
+    properties
+        config          % Configuration structure
+        figure_handle   % Handle to main figure
+        truck_patches   % Array of patch objects for trucks
+        info_text      % Handle to information text
+        video_writer   % VideoWriter object for saving video
+        road_limits    % Visualization limits [xmin xmax ymin ymax]
+        truck_width    % Width of truck visualization
     end
     
     methods
         function obj = PlatoonVisualizer(config)
+            % Constructor for PlatoonVisualizer
             obj.config = config;
-            obj.initializeFigure();
             
-            if obj.config.visualization.save_video
-                obj.initializeVideoWriter();
+            % Set visualization parameters
+            obj.truck_width = 2.5;  % meters
+            road_length = 200;      % meters
+            road_width = 10;        % meters
+            obj.road_limits = [-20 road_length -road_width/2 road_width/2];
+            
+            % Create figure
+            obj.figure_handle = figure('Name', 'Truck Platoon Simulation', ...
+                'NumberTitle', 'off', ...
+                'Color', [1 1 1], ...
+                'Position', [100 100 1200 400]);
+            
+            % Initialize axis
+            ax = axes('Parent', obj.figure_handle);
+            axis(obj.road_limits);
+            hold(ax, 'on');
+            grid(ax, 'on');
+            xlabel(ax, 'Position (m)');
+            ylabel(ax, 'Lateral Position (m)');
+            
+            % Draw road
+            fill([obj.road_limits(1) obj.road_limits(2) obj.road_limits(2) obj.road_limits(1)], ...
+                [0 0 obj.truck_width/2 obj.truck_width/2], ...
+                [0.8 0.8 0.8], 'EdgeColor', 'none');
+            
+            % Create truck visualizations
+            obj.truck_patches = gobjects(config.truck.num_trucks, 1);
+            for i = 1:config.truck.num_trucks
+                % Create truck rectangle
+                truck_color = obj.config.visualization.truck_colors{i};
+                obj.truck_patches(i) = rectangle('Position', [0 -obj.truck_width/2 ...
+                    config.truck.length obj.truck_width], ...
+                    'FaceColor', truck_color, ...
+                    'EdgeColor', 'k');
+            end
+            
+            % Add information text
+            obj.info_text = text(obj.road_limits(1) + 5, obj.road_limits(4) - 1, '', ...
+                'FontSize', 10);
+            
+            % Initialize video writer if enabled
+            if config.visualization.save_video
+                obj.video_writer = VideoWriter(config.visualization.video_filename, 'MPEG-4');
+                obj.video_writer.FrameRate = config.simulation.frame_rate;
+                open(obj.video_writer);
             end
         end
         
-        function updatePlots(obj, t, positions, velocities, accelerations, jerks)
-            % Update truck positions
-            cla(obj.truckPositionsAxis);
-            hold(obj.truckPositionsAxis, 'on');
+        function update(obj, positions, velocities, current_time)
+            % Update visualization with current state
+            %
+            % Parameters:
+            %   positions - Current positions of all trucks
+            %   velocities - Current velocities of all trucks
+            %   current_time - Current simulation time
             
-            % Plot each truck as a rectangle
+            % Update truck positions
             for i = 1:length(positions)
-                rectangle(obj.truckPositionsAxis, 'Position', ...
-                    [positions(i), -1, obj.config.truck.length, 2], ...
-                    'FaceColor', 'b', 'EdgeColor', 'k');
+                set(obj.truck_patches(i), 'Position', ...
+                    [positions(i) -obj.truck_width/2 ...
+                    obj.config.truck.length obj.truck_width]);
             end
             
-            title(obj.truckPositionsAxis, sprintf('Time: %.2f s', t));
-            xlabel(obj.truckPositionsAxis, 'Position (m)');
-            xlim(obj.truckPositionsAxis, [min(positions)-50, max(positions)+50]);
-            ylim(obj.truckPositionsAxis, [-3, 3]);
-            grid(obj.truckPositionsAxis, 'on');
-            hold(obj.truckPositionsAxis, 'off');
+            % Update information text
+            info_str = sprintf('Time: %.2fs\nLead Truck Speed: %.1f km/h', ...
+                current_time, velocities(1) * 3.6);
+            set(obj.info_text, 'String', info_str);
             
-            % Update velocity plot
-            plot(obj.velocityAxis, t, velocities, 'o-');
-            title(obj.velocityAxis, 'Velocities');
-            xlabel(obj.velocityAxis, 'Time (s)');
-            ylabel(obj.velocityAxis, 'Velocity (m/s)');
-            grid(obj.velocityAxis, 'on');
+            % Update axis limits to follow lead truck
+            lead_pos = positions(1);
+            window_width = diff(obj.road_limits(1:2));
+            if lead_pos > obj.road_limits(2) - window_width/4
+                obj.road_limits(1:2) = obj.road_limits(1:2) + window_width/4;
+                axis(obj.road_limits);
+            end
             
-            % Update acceleration plot
-            plot(obj.accelerationAxis, t, accelerations, 'o-');
-            title(obj.accelerationAxis, 'Accelerations');
-            xlabel(obj.accelerationAxis, 'Time (s)');
-            ylabel(obj.accelerationAxis, 'Acceleration (m/s^2)');
-            grid(obj.accelerationAxis, 'on');
-            
-            % Update jerk plot
-            plot(obj.jerkAxis, t, jerks, 'o-');
-            title(obj.jerkAxis, 'Jerks');
-            xlabel(obj.jerkAxis, 'Time (s)');
-            ylabel(obj.jerkAxis, 'Jerk (m/s^3)');
-            grid(obj.jerkAxis, 'on');
-            
+            % Force drawing update
             drawnow;
-            
-            % Capture frame if video recording is enabled
-            if ~isempty(obj.videoWriter)
-                frame = getframe(obj.figure);
-                writeVideo(obj.videoWriter, frame);
+        end
+        
+        function saveFrame(obj, frame_number)
+            % Save current frame if video recording is enabled
+            if ~isempty(obj.video_writer) && obj.video_writer.IsOpen
+                frame = getframe(obj.figure_handle);
+                writeVideo(obj.video_writer, frame);
             end
         end
         
         function delete(obj)
-            % Clean up video writer if it exists
-            if ~isempty(obj.videoWriter)
-                close(obj.videoWriter);
+            % Destructor - Clean up video writer
+            if ~isempty(obj.video_writer) && obj.video_writer.IsOpen
+                close(obj.video_writer);
             end
             
             % Close figure if it exists
-            if ishandle(obj.figure)
-                close(obj.figure);
+            if isvalid(obj.figure_handle)
+                close(obj.figure_handle);
             end
-        end
-    end
-    
-    methods (Access = private)
-        function initializeFigure(obj)
-            % Create main figure
-            obj.figure = figure('Name', 'Truck Platoon Visualization', ...
-                'NumberTitle', 'off', ...
-                'Position', [100, 100, 1200, 800]);
-            
-            % Create subplots for different metrics
-            obj.truckPositionsAxis = subplot(4,1,1);
-            title(obj.truckPositionsAxis, 'Truck Positions');
-            xlabel(obj.truckPositionsAxis, 'Position (m)');
-            grid(obj.truckPositionsAxis, 'on');
-            
-            obj.velocityAxis = subplot(4,1,2);
-            title(obj.velocityAxis, 'Velocities');
-            xlabel(obj.velocityAxis, 'Time (s)');
-            ylabel(obj.velocityAxis, 'Velocity (m/s)');
-            grid(obj.velocityAxis, 'on');
-            hold(obj.velocityAxis, 'on');
-            
-            obj.accelerationAxis = subplot(4,1,3);
-            title(obj.accelerationAxis, 'Accelerations');
-            xlabel(obj.accelerationAxis, 'Time (s)');
-            ylabel(obj.accelerationAxis, 'Acceleration (m/s^2)');
-            grid(obj.accelerationAxis, 'on');
-            hold(obj.accelerationAxis, 'on');
-            
-            obj.jerkAxis = subplot(4,1,4);
-            title(obj.jerkAxis, 'Jerks');
-            xlabel(obj.jerkAxis, 'Time (s)');
-            ylabel(obj.jerkAxis, 'Jerk (m/s^3)');
-            grid(obj.jerkAxis, 'on');
-            hold(obj.jerkAxis, 'on');
-        end
-        
-        function initializeVideoWriter(obj)
-            % Create video writer if save_video is enabled
-            [path, ~, ~] = fileparts(obj.config.visualization.video_filename);
-            if ~exist(path, 'dir')
-                mkdir(path);
-            end
-            
-            obj.videoWriter = VideoWriter(obj.config.visualization.video_filename, 'MPEG-4');
-            obj.videoWriter.FrameRate = obj.config.simulation.frame_rate;
-            open(obj.videoWriter);
         end
     end
 end

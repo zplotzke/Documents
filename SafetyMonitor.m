@@ -3,25 +3,25 @@ classdef SafetyMonitor < handle
     %
     % Author: zplotzke
     % Created: 2025-02-08 03:43:20 UTC
-    
+
     properties (Access = private)
         config          % Configuration parameters
         logger          % Logger instance
         warningSystem   % Warning system instance
     end
-    
+
     methods
         function obj = SafetyMonitor(config, logger)
             obj.config = config;
             obj.logger = logger;
             obj.warningSystem = WarningSystem(config);
         end
-        
+
         function [is_safe, violations] = checkSafetyConditions(obj, pos, vel, acc, jerk)
             is_safe = true;
             violations = struct('type', {}, 'message', {}, 'value', {});
             currentTime = pos(1);  % Use lead truck position as time proxy
-            
+
             % Check relative distances
             for i = 2:length(pos)
                 distance = abs(pos(i) - pos(i-1));
@@ -34,7 +34,7 @@ classdef SafetyMonitor < handle
                     violations(end).value = distance;
                 end
             end
-            
+
             % Check relative velocities
             for i = 2:length(vel)
                 rel_vel = vel(i) - vel(i-1);
@@ -47,7 +47,7 @@ classdef SafetyMonitor < handle
                     violations(end).value = rel_vel;
                 end
             end
-            
+
             % Check accelerations
             for i = 1:length(acc)
                 if abs(acc(i)) > obj.config.safety.max_acceleration && ...
@@ -59,7 +59,7 @@ classdef SafetyMonitor < handle
                     violations(end).value = acc(i);
                 end
             end
-            
+
             % Check jerks
             for i = 1:length(jerk)
                 if abs(jerk(i)) > obj.config.safety.max_jerk && ...
@@ -72,7 +72,7 @@ classdef SafetyMonitor < handle
                 end
             end
         end
-        
+
         function logViolations(obj, violations, time)
             for i = 1:length(violations)
                 obj.logger.warning('Time %.2f: %s', time, violations(i).message);
