@@ -132,7 +132,8 @@ classdef mainSimulation < handle
                 'times', obj.currentTime, ...
                 'positions', obj.truckPositions(:), ...
                 'velocities', obj.truckVelocities(:), ...
-                'accelerations', obj.truckAccelerations(:));
+                'accelerations', obj.truckAccelerations(:), ...
+                'jerks', zeros(size(obj.truckAccelerations(:))));
         end
 
         function updateTruckDynamics(obj, dt)
@@ -185,17 +186,19 @@ classdef mainSimulation < handle
 
         function updateTimeHistory(obj)
             % Update time history with current state
-            % Append current time
             obj.timeHistory.times(end+1) = obj.currentTime;
-
-            % Append current positions as a new column
             obj.timeHistory.positions = [obj.timeHistory.positions, obj.truckPositions(:)];
-
-            % Append current velocities as a new column
             obj.timeHistory.velocities = [obj.timeHistory.velocities, obj.truckVelocities(:)];
-
-            % Append current accelerations as a new column
             obj.timeHistory.accelerations = [obj.timeHistory.accelerations, obj.truckAccelerations(:)];
+
+            % Calculate and store jerks
+            if length(obj.timeHistory.times) > 1
+                dt = diff(obj.timeHistory.times(end-1:end));
+                jerks = diff(obj.timeHistory.accelerations(:,end-1:end), 1, 2) ./ dt;
+                obj.timeHistory.jerks = [obj.timeHistory.jerks, jerks];
+            else
+                obj.timeHistory.jerks = [obj.timeHistory.jerks, zeros(size(obj.truckAccelerations))];
+            end
         end
     end
 end

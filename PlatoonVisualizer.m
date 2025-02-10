@@ -72,59 +72,41 @@ classdef PlatoonVisualizer < handle
         end
 
         function visualize(obj, state)
-            % Visualize final simulation state with synchronized animation
+            % Extract all data from simulation state
+            times = state.timeHistory.times;
+            positions = state.timeHistory.positions;
+            velocities = state.timeHistory.velocities;
+            accelerations = state.timeHistory.accelerations;
+            jerks = state.timeHistory.jerks;
 
-            clf(obj.figure_handle);
+            % Get truck lengths from config
+            lengths = state.config.truck.length * ones(state.config.truck.num_trucks, 1);
 
-            % Calculate acceleration and jerk
-            [accelerations, jerks] = obj.calculateKinematics(state.timeHistory.times, ...
-                state.timeHistory.velocities);
+            % Set total distance based on final position plus margin
+            obj.total_distance = max(max(positions)) + 100;
 
-            % Create subplots with adjusted spacing
-            % Format: subplot('Position', [left bottom width height])
-            obj.animation_ax = subplot('Position', [0.15 0.82 0.75 0.12]); % Animation plot
-            obj.initializeAnimationPlot(state);
-
-            obj.velocity_ax = subplot('Position', [0.15 0.63 0.75 0.12]); % Velocity plot
-            obj.initializeVelocityPlot(state.timeHistory.times, ...
-                state.timeHistory.velocities);
-
-            obj.accel_ax = subplot('Position', [0.15 0.44 0.75 0.12]); % Acceleration plot
-            obj.initializeAccelPlot(state.timeHistory.times, accelerations);
-
-            obj.jerk_ax = subplot('Position', [0.15 0.25 0.75 0.12]); % Jerk plot
-            obj.initializeJerkPlot(state.timeHistory.times, jerks);
-
-            obj.safety_ax = subplot('Position', [0.15 0.06 0.75 0.12]); % Safety distances
-            obj.initializeSafetyPlot(state.timeHistory.times, ...
-                state.timeHistory.positions, ...
-                state.lengths);
-
-            % Add timestamp information
-            annotation('textbox', [0 0 1 0.02], ...
-                'String', sprintf('Final Simulation Results\nTimestamp: %s\nAuthor: %s', ...
-                '2025-02-10 04:51:07', 'zplotzke'), ...
-                'EdgeColor', 'none', ...
-                'HorizontalAlignment', 'center');
-
-            % Synchronized animation
-            obj.animateSimulation(state.timeHistory.times, ...
-                state.timeHistory.positions, ...
-                state.timeHistory.velocities, ...
-                accelerations, ...
-                jerks, ...
-                state.lengths);
-
-            % Export figure
-            output_file = 'platoon_final_simulation.png';
-            try
-                % Ensure figure is updated
-                drawnow;
-                % Save figure
-                print(obj.figure_handle, '-dpng', '-r300', output_file);
-            catch ME
-                warning(ME.identifier, '%s', ME.message);
+            % Create figure if it doesn't exist
+            if isempty(obj.figure_handle) || ~isvalid(obj.figure_handle)
+                obj.figure_handle = figure('Name', 'Platoon Visualization', ...
+                    'Position', [100, 100, 1200, 800]);
+            else
+                figure(obj.figure_handle);
             end
+
+            % Create subplot layout
+            if isempty(obj.animation_ax)
+                obj.createPlotLayout();
+            end
+
+            % Initialize time lines for each plot
+            obj.initializeTimeLine(times, state.config.truck.num_trucks);
+
+            % Initialize real-time plot lines
+            obj.initializePlotLines(times, state.config.truck.num_trucks);
+
+            % Animate the simulation with all available data
+            obj.animateSimulation(times, positions, velocities, ...
+                accelerations, jerks, lengths);
         end
 
         function color = getTruckColor(obj, index)
@@ -224,26 +206,6 @@ classdef PlatoonVisualizer < handle
 
             % Set x-axis limits with margin
             xlim([-50, obj.total_distance + 50]);
-        end
-
-        function [accelerations, jerks] = calculateKinematics(obj, times, velocities)
-            % Calculate acceleration and jerk from velocity data
-            dt = diff(times);
-            accelerations = zeros(size(velocities));
-            jerks = zeros(size(velocities));
-
-            % Calculate acceleration
-            for i = 1:size(velocities, 1)
-                % First derivative for acceleration
-                dv = diff(velocities(i,:));
-                accelerations(i,1:end-1) = dv ./ dt;
-                accelerations(i,end) = accelerations(i,end-1);
-
-                % Second derivative for jerk
-                da = diff(accelerations(i,:));
-                jerks(i,1:end-1) = da ./ dt;
-                jerks(i,end) = jerks(i,end-1);
-            end
         end
 
         function initializeVelocityPlot(obj, times, velocities)

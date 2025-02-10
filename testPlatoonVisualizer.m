@@ -2,7 +2,7 @@
 % Test script for PlatoonVisualizer class to simulate exactly one mile travel
 %
 % Author: zplotzke
-% Last Modified: 2025-02-10 04:40:40 UTC
+% Last Modified: 2025-02-10 18:49:21 UTC
 
 % Clear workspace and close figures
 clear;
@@ -23,7 +23,7 @@ try
         ], ...
         'initial_speed', 20, ...    % m/s (approximately 72 km/h)
         'desired_gap', 20, ...      % meters between trucks
-        'max_relative_velocity', 5);
+        'max_relative_velocity', 5); % m/s
 
     % Safety configuration
     config.safety = struct(...
@@ -46,16 +46,15 @@ try
     t = 0:dt:config.simulation.duration;
     num_steps = length(t);
 
-    % Initialize state structure
+    % Initialize state structure with complete data
     state = struct();
     state.lengths = config.truck.length;
-
-    % Initialize time history
     state.timeHistory = struct();
     state.timeHistory.times = t;
-
-    % Initialize positions (starting with equal spacing)
     state.timeHistory.positions = zeros(config.truck.num_trucks, num_steps);
+    state.timeHistory.velocities = zeros(config.truck.num_trucks, num_steps);
+    state.timeHistory.accelerations = zeros(config.truck.num_trucks, num_steps);
+    state.timeHistory.jerks = zeros(config.truck.num_trucks, num_steps);
 
     % Calculate total platoon length for initial positioning
     total_platoon_length = sum(config.truck.length) + ...
@@ -64,43 +63,38 @@ try
     % Start position for lead truck
     lead_truck_start = initial_position + total_platoon_length;
 
+    % Initialize position and velocity data for each truck
     for i = 1:config.truck.num_trucks
-        % Each truck starts behind the previous one with desired gap + truck length
+        % Calculate base position for each truck
         total_offset = 0;
         for j = 1:i-1
             total_offset = total_offset + config.truck.length(j) + config.truck.desired_gap;
         end
-
-        % Calculate base position (starting from lead truck)
         base_position = lead_truck_start - total_offset;
 
-        % Add small sinusoidal variation to make visualization interesting
+        % Add sinusoidal variation to make visualization interesting
         phase = (i-1) * pi/4;      % Different phase for each truck
-        amplitude = 0.5;            % Small amplitude for variation (meters)
+        pos_amplitude = 0.5;        % Small amplitude for position variation (meters)
+        vel_amplitude = 0.2;        % Small amplitude for velocity variation (m/s)
         frequency = 0.1;            % Low frequency for gentle oscillation (Hz)
 
-        % Position time history with sinusoidal variation
+        % Calculate position and velocity time histories with variations
         base_positions = base_position + config.truck.initial_speed * t;
-        variations = amplitude * sin(2*pi*frequency*t + phase);
-        state.timeHistory.positions(i,:) = base_positions + variations;
-    end
+        pos_variations = pos_amplitude * sin(2*pi*frequency*t + phase);
+        state.timeHistory.positions(i,:) = base_positions + pos_variations;
 
-    % Initialize velocities (approximately constant with small variations)
-    state.timeHistory.velocities = zeros(config.truck.num_trucks, num_steps);
-    for i = 1:config.truck.num_trucks
-        % Add small sinusoidal variation to velocity
-        phase = (i-1) * pi/4;
-        amplitude = 0.2;            % Small velocity variation (m/s)
-        frequency = 0.1;
-
-        % Velocity time history with sinusoidal variation
         base_velocity = config.truck.initial_speed * ones(1, num_steps);
-        variations = amplitude * sin(2*pi*frequency*t + phase);
-        state.timeHistory.velocities(i,:) = base_velocity + variations;
-    end
+        vel_variations = vel_amplitude * sin(2*pi*frequency*t + phase);
+        state.timeHistory.velocities(i,:) = base_velocity + vel_variations;
 
-    % Create visualizer
-    visualizer = PlatoonVisualizer(config);
+        % Calculate accelerations from velocity changes
+        state.timeHistory.accelerations(i,1:end-1) = diff(state.timeHistory.velocities(i,:)) ./ dt;
+        state.timeHistory.accelerations(i,end) = state.timeHistory.accelerations(i,end-1);
+
+        % Calculate jerks from acceleration changes
+        state.timeHistory.jerks(i,1:end-1) = diff(state.timeHistory.accelerations(i,:)) ./ dt;
+        state.timeHistory.jerks(i,end) = state.timeHistory.jerks(i,end-1);
+    end
 
     % Debug: Print first and last positions for each truck
     fprintf('Position data verification:\n');
@@ -111,7 +105,8 @@ try
             i, first_pos, last_pos, last_pos - first_pos);
     end
 
-    % Visualize results
+    % Create and run visualizer
+    visualizer = PlatoonVisualizer(config);
     visualizer.visualize(state);
 
 catch ME
