@@ -72,41 +72,59 @@ classdef PlatoonVisualizer < handle
         end
 
         function visualize(obj, state)
-            % Extract all data from simulation state
-            times = state.timeHistory.times;
-            positions = state.timeHistory.positions;
-            velocities = state.timeHistory.velocities;
-            accelerations = state.timeHistory.accelerations;
-            jerks = state.timeHistory.jerks;
+            % Visualize final simulation state with synchronized animation
 
-            % Get truck lengths from config
-            lengths = state.config.truck.length * ones(state.config.truck.num_trucks, 1);
+            clf(obj.figure_handle);
 
-            % Set total distance based on final position plus margin
-            obj.total_distance = max(max(positions)) + 100;
+            % Calculate acceleration and jerk
+            [accelerations, jerks] = obj.calculateKinematics(state.timeHistory.times, ...
+                state.timeHistory.velocities);
 
-            % Create figure if it doesn't exist
-            if isempty(obj.figure_handle) || ~isvalid(obj.figure_handle)
-                obj.figure_handle = figure('Name', 'Platoon Visualization', ...
-                    'Position', [100, 100, 1200, 800]);
-            else
-                figure(obj.figure_handle);
+            % Create subplots with adjusted spacing
+            % Format: subplot('Position', [left bottom width height])
+            obj.animation_ax = subplot('Position', [0.15 0.82 0.75 0.12]); % Animation plot
+            obj.initializeAnimationPlot(state);
+
+            obj.velocity_ax = subplot('Position', [0.15 0.63 0.75 0.12]); % Velocity plot
+            obj.initializeVelocityPlot(state.timeHistory.times, ...
+                state.timeHistory.velocities);
+
+            obj.accel_ax = subplot('Position', [0.15 0.44 0.75 0.12]); % Acceleration plot
+            obj.initializeAccelPlot(state.timeHistory.times, accelerations);
+
+            obj.jerk_ax = subplot('Position', [0.15 0.25 0.75 0.12]); % Jerk plot
+            obj.initializeJerkPlot(state.timeHistory.times, jerks);
+
+            obj.safety_ax = subplot('Position', [0.15 0.06 0.75 0.12]); % Safety distances
+            obj.initializeSafetyPlot(state.timeHistory.times, ...
+                state.timeHistory.positions, ...
+                state.lengths);
+
+            % Add timestamp information
+            annotation('textbox', [0 0 1 0.02], ...
+                'String', sprintf('Final Simulation Results\nTimestamp: %s\nAuthor: %s', ...
+                '2025-02-10 04:51:07', 'zplotzke'), ...
+                'EdgeColor', 'none', ...
+                'HorizontalAlignment', 'center');
+
+            % Synchronized animation
+            obj.animateSimulation(state.timeHistory.times, ...
+                state.timeHistory.positions, ...
+                state.timeHistory.velocities, ...
+                accelerations, ...
+                jerks, ...
+                state.lengths);
+
+            % Export figure
+            output_file = 'platoon_final_simulation.png';
+            try
+                % Ensure figure is updated
+                drawnow;
+                % Save figure
+                print(obj.figure_handle, '-dpng', '-r300', output_file);
+            catch export_error
+                warning('Failed to export figure. Error: %s', export_error.message);
             end
-
-            % Create subplot layout
-            if isempty(obj.animation_ax)
-                obj.createPlotLayout();
-            end
-
-            % Initialize time lines for each plot
-            obj.initializeTimeLine(times, state.config.truck.num_trucks);
-
-            % Initialize real-time plot lines
-            obj.initializePlotLines(times, state.config.truck.num_trucks);
-
-            % Animate the simulation with all available data
-            obj.animateSimulation(times, positions, velocities, ...
-                accelerations, jerks, lengths);
         end
 
         function color = getTruckColor(obj, index)
@@ -124,56 +142,53 @@ classdef PlatoonVisualizer < handle
     methods (Access = private)
         function initializeAnimationPlot(obj, state)
             % Initialize animation plot with improved road visualization
-            % Last Modified: 2025-02-10 05:16:23
-            % Author: zplotzke
 
             axes(obj.animation_ax);
             hold on;
 
-            % Road visualization with realistic dimensions
-            lane_width = 3.7;       % Standard US highway lane width (meters)
-            shoulder_width = 2.5;    % Standard shoulder width (meters)
-            road_width = (lane_width * 2) + (shoulder_width * 2);  % Two lanes plus shoulders
+            % Road visualization with standard lane width
+            road_width = 3.5;  % Standard lane width in meters
             road_y = [-road_width/2, road_width/2];
             road_x = [0, obj.total_distance];
 
             % Create the road surface with asphalt-like gray color
             fill([road_x(1), road_x(2), road_x(2), road_x(1)], ...
                 [road_y(1), road_y(1), road_y(2), road_y(2)], ...
-                [0.85 0.85 0.85], ...
+                [0.85 0.85 0.85], ...  % Lighter gray for better visibility
                 'EdgeColor', 'none', ...
-                'DisplayName', 'Road Surface');
+                'DisplayName', 'Road Lane');
 
             % Add lane markings (dashed lines)
-            lane_mark_length = 3;
-            lane_mark_gap = 6;
+            lane_mark_length = 3;  % 3m marks (standard)
+            lane_mark_gap = 6;     % 6m gaps (standard)
             mark_pattern = 0:lane_mark_length+lane_mark_gap:obj.total_distance;
 
-            % Draw center line
+            % Draw dashed white lines on both sides
             for i = 1:length(mark_pattern)-1
                 if mod(i,2) == 1
-                    % Center line
+                    % Bottom lane marking
                     plot([mark_pattern(i), mark_pattern(i+1)], ...
-                        [0, 0], ...
-                        'w-', 'LineWidth', 2, ...
+                        [road_y(1), road_y(1)], ...
+                        'w-', 'LineWidth', 1.5, ...
+                        'HandleVisibility', 'off');
+                    % Top lane marking
+                    plot([mark_pattern(i), mark_pattern(i+1)], ...
+                        [road_y(2), road_y(2)], ...
+                        'w-', 'LineWidth', 1.5, ...
                         'HandleVisibility', 'off');
                 end
             end
 
-            % Draw solid shoulder lines
-            plot([0, obj.total_distance], [-lane_width, -lane_width], 'w-', 'LineWidth', 2, 'HandleVisibility', 'off');
-            plot([0, obj.total_distance], [lane_width, lane_width], 'w-', 'LineWidth', 2, 'HandleVisibility', 'off');
-
-            % Set axis properties for top-down view with realistic scale
-            ylim([-road_width, road_width]);  % Full road width plus small margin
+            % Set axis properties
+            ylim([-road_width*1.2, road_width*1.2]);  % Add some margin around the road
             xlabel('Distance (m)', 'FontSize', 10);
-            ylabel('Lateral Position (m)', 'FontSize', 10);
 
-            title('Truck Platoon Movement (Top View)', ...
-                'FontSize', 14, ...
-                'FontWeight', 'bold', ...
-                'Units', 'normalized', ...
-                'Position', [0.5, 1.1, 0]);
+            % Updated title with larger font and raised position
+            title('Truck Platoon Movement', ...
+                'FontSize', 14, ...          % Increased from 12 to 14
+                'FontWeight', 'bold', ...    % Made bold
+                'Units', 'normalized', ...   % Use normalized units
+                'Position', [0.5, 1.1, 0]); % Raised position
 
             grid on;
 
@@ -192,20 +207,43 @@ classdef PlatoonVisualizer < handle
                     label = sprintf('%.0fm', d);
                 end
 
-                text(d, -road_width*0.8, label, ...
+                text(d, -road_width*0.9, label, ...
                     'HorizontalAlignment', 'center', ...
                     'FontSize', 8, ...
                     'Color', [0.3 0.3 0.3]);
             end
 
+            % Keep grid behind the visualization
             set(gca, 'Layer', 'top');
+
+            % Add legend in a clear location
             legend('show', 'Location', 'northwest');
 
-            % Use normal axis scaling
-            axis normal;
+            % Make sure axes are equal for proper scaling
+            axis equal;
 
-            % Set x-axis limits with margin
-            xlim([-50, obj.total_distance + 50]);
+            % Ensure proper x-axis limits
+            xlim([-50, obj.total_distance + 50]);  % Add some margin at start and end
+        end
+
+        function [accelerations, jerks] = calculateKinematics(obj, times, velocities)
+            % Calculate acceleration and jerk from velocity data
+            dt = diff(times);
+            accelerations = zeros(size(velocities));
+            jerks = zeros(size(velocities));
+
+            % Calculate acceleration
+            for i = 1:size(velocities, 1)
+                % First derivative for acceleration
+                dv = diff(velocities(i,:));
+                accelerations(i,1:end-1) = dv ./ dt;
+                accelerations(i,end) = accelerations(i,end-1);
+
+                % Second derivative for jerk
+                da = diff(accelerations(i,:));
+                jerks(i,1:end-1) = da ./ dt;
+                jerks(i,end) = jerks(i,end-1);
+            end
         end
 
         function initializeVelocityPlot(obj, times, velocities)
@@ -226,7 +264,7 @@ classdef PlatoonVisualizer < handle
                     'DisplayName', sprintf('Truck %d', i));
             end
 
-            title('Velocity', 'FontSize', 12);
+            title('Velocity History', 'FontSize', 12);
             xlabel('Time (s)');
             ylabel('Velocity (m/s)');
 
@@ -259,7 +297,7 @@ classdef PlatoonVisualizer < handle
                     'DisplayName', sprintf('Truck %d', i));
             end
 
-            title('Acceleration', 'FontSize', 12);
+            title('Acceleration History', 'FontSize', 12);
             xlabel('Time (s)');
             ylabel('Acceleration (m/s²)');
 
@@ -292,7 +330,7 @@ classdef PlatoonVisualizer < handle
                     'DisplayName', sprintf('Truck %d', i));
             end
 
-            title('Jerk', 'FontSize', 12);
+            title('Jerk History', 'FontSize', 12);
             xlabel('Time (s)');
             ylabel('Jerk (m/s³)');
 
@@ -329,7 +367,7 @@ classdef PlatoonVisualizer < handle
             yline(obj.config.safety.min_safe_distance, 'r--', ...
                 'LineWidth', 1.5, 'HandleVisibility', 'off');
 
-            title('Inter-vehicle Distances', 'FontSize', 12);
+            title('Inter-vehicle Safety Distances', 'FontSize', 12);
             xlabel('Time (s)');
             ylabel('Distance (m)');
 
@@ -345,66 +383,139 @@ classdef PlatoonVisualizer < handle
         end
 
         function safety_history = calculateSafetyHistory(obj, positions, lengths)
-            % Calculate inter-vehicle distances for all timesteps
-            %
-            % Parameters:
-            %   positions - Matrix of positions [num_trucks x num_timesteps]
-            %   lengths - Vector of truck lengths [num_trucks x 1]
-            %
-            % Returns:
-            %   safety_history - Matrix of inter-vehicle distances [(num_trucks-1) x num_timesteps]
-
-            num_trucks = size(positions, 1);
+            % Calculate safety distance history for all timesteps
             num_times = size(positions, 2);
-            safety_history = zeros(num_trucks - 1, num_times);
+            num_gaps = size(positions, 1) - 1;
+            safety_history = zeros(num_gaps, num_times);
 
             for t = 1:num_times
-                for i = 1:(num_trucks - 1)
-                    % Distance between front of following truck and rear of leading truck
+                for i = 1:num_gaps
                     safety_history(i,t) = positions(i,t) - positions(i+1,t) - lengths(i);
                 end
             end
         end
-        function animateSimulation(obj, times, positions, velocities, accelerations, jerks, lengths)
-            % ANIMATESIMULATION Animates the truck platoon simulation
-            % Last Modified: 2025-02-10 18:15:43 UTC
-            % Author: zplotzke
 
+        function createProgressIndicator(obj)
+            % Create a panel for progress indication
+            obj.progress_panel = uipanel('Position', [0.1 0.96 0.8 0.03], ...
+                'BackgroundColor', 'white', ...
+                'BorderType', 'none');
+
+            % Create progress bar background (white rectangle)
+            obj.progress_bar = rectangle('Parent', axes('Parent', obj.progress_panel, ...
+                'Position', [0 0 1 1], ...
+                'Visible', 'off'), ...
+                'Position', [0.01 0.1 0.98 0.8], ...
+                'FaceColor', [0.9 0.9 0.9], ...
+                'EdgeColor', 'k');
+
+            % Create progress fill (blue rectangle)
+            obj.progress_fill = rectangle('Parent', get(obj.progress_bar, 'Parent'), ...
+                'Position', [0.01 0.1 0 0.8], ...
+                'FaceColor', [0.2 0.6 1], ...
+                'EdgeColor', 'none');
+
+            % Create progress text
+            obj.progress_text = text('Parent', get(obj.progress_bar, 'Parent'), ...
+                'Position', [0.5 0.5], ...
+                'String', 'Distance: 0.0 m (0.0%)', ...
+                'HorizontalAlignment', 'center', ...
+                'VerticalAlignment', 'middle');
+
+            % Set axis properties
+            ax = get(obj.progress_bar, 'Parent');
+            set(ax, 'XLim', [0 1], 'YLim', [0 1], ...
+                'Visible', 'off');
+        end
+
+        function updateProgress(obj, current_position)
+            % Calculate progress percentage
+            progress = max(0, min(1, (current_position - obj.road_limits(1)) / ...
+                (obj.total_distance - obj.road_limits(1))));
+
+            % Update progress fill position
+            set(obj.progress_fill, 'Position', [0.01 0.1 0.98*progress 0.8]);
+
+            % Update progress text
+            set(obj.progress_text, 'String', sprintf('Distance: %.1f m (%.1f%%)', ...
+                current_position, progress*100));
+        end
+
+        function drawRoad(obj)
+            % Draw road with distance markers
+            hold on;
+
+            % Draw main road surface
+            fill([obj.road_limits(1) obj.road_limits(2) obj.road_limits(2) obj.road_limits(1)], ...
+                [0 0 obj.truck_width/2 obj.truck_width/2], ...
+                [0.8 0.8 0.8], 'EdgeColor', 'none');
+
+            % Add distance markers every 100 meters
+            for d = 0:100:obj.road_limits(2)
+                % Draw marker line
+                plot([d d], [-obj.truck_width/4 obj.truck_width/4], 'k-');
+                % Add distance label
+                text(d, -obj.truck_width, sprintf('%dm', d), ...
+                    'HorizontalAlignment', 'center', ...
+                    'VerticalAlignment', 'top');
+            end
+
+            % Add mile marker
+            text(1609.34, -obj.truck_width*1.5, '1 mile', ...
+                'HorizontalAlignment', 'center', ...
+                'VerticalAlignment', 'top', ...
+                'FontWeight', 'bold');
+
+            hold off;
+        end
+
+        function updateViewWindow(obj, lead_position)
+            % Update the view window to follow the lead truck
+            window_width = obj.view_window(2) - obj.view_window(1);
+            margin = window_width * 0.3; % 30% of window width ahead of lead truck
+
+            % Calculate new window limits
+            new_center = lead_position + margin;
+            new_xmin = new_center - window_width/2;
+            new_xmax = new_center + window_width/2;
+
+            % Ensure window stays within road limits
+            if new_xmin < obj.road_limits(1)
+                new_xmin = obj.road_limits(1);
+                new_xmax = new_xmin + window_width;
+            elseif new_xmax > obj.road_limits(2)
+                new_xmax = obj.road_limits(2);
+                new_xmin = new_xmax - window_width;
+            end
+
+            % Update view window
+            obj.view_window = [new_xmin new_xmax obj.road_limits(3) obj.road_limits(4)];
+            axis(obj.animation_ax, obj.view_window);
+        end
+
+        function animateSimulation(obj, times, positions, velocities, accelerations, jerks, lengths)
             % Get number of trucks and frames
             num_frames = length(times);
             num_trucks = size(positions, 1);
 
-            % Calculate safety history at the start
-            safety_history = obj.calculateSafetyHistory(positions, lengths);
+            % Get truck dimensions
+            truck_height = 2; % Fixed height of 2 units for all trucks when viewed from side
 
-            % Get truck dimensions for top-down view
-            truck_width = 2.6;  % Standard semi-truck width (meters)
-
-            % Calculate frame delay to match simulation time
-            frame_delay = diff(times(1:2));
-
-            % Create new figure and axes if needed
-            try
-                if isempty(obj.animation_ax) || ~isgraphics(obj.animation_ax, 'axes')
-                    obj.animation_ax = axes(figure);
-                end
-            catch
-                obj.animation_ax = axes(figure);
-            end
+            % Define view window size
+            window_width = 300; % Increased width of visible window to show more of the road
 
             % Initialize truck patches if not already created
             if isempty(obj.truck_patches)
                 obj.truck_patches = gobjects(num_trucks, 1);
                 axes(obj.animation_ax);
+
+                % Set axis properties
                 hold on
 
-                % Create legend entries for trucks
-                legend_entries = cell(num_trucks, 1);
-
                 for i = 1:num_trucks
-                    % Create patch for each truck (top-down view)
-                    y_start = -truck_width/2;
-                    y_end = truck_width/2;
+                    % Create patch for each truck
+                    y_start = -truck_height/2;
+                    y_end = truck_height/2;
                     x_start = positions(i,1);
                     x_end = positions(i,1) + lengths(i);
 
@@ -412,117 +523,76 @@ classdef PlatoonVisualizer < handle
                     x_coords = [x_start, x_end, x_end, x_start];
                     y_coords = [y_start, y_start, y_end, y_end];
 
-                    obj.truck_patches(i) = patch(obj.animation_ax, ...
-                        'XData', x_coords, ...
-                        'YData', y_coords, ...
+                    obj.truck_patches(i) = patch('XData', x_coords, 'YData', y_coords, ...
                         'FaceColor', obj.getTruckColor(i), ...
-                        'EdgeColor', 'black', ...
-                        'LineWidth', 1.5, ...
-                        'DisplayName', sprintf('Truck %d', i));
-
-                    legend_entries{i} = sprintf('Truck %d', i);
+                        'EdgeColor', 'black');
                 end
 
                 % Initial axis limits
-                ylim(obj.animation_ax, [-6.1, 6.1]); % Road width plus margin
-                grid(obj.animation_ax, 'on');
-                xlabel(obj.animation_ax, 'Position (m)');
-                ylabel(obj.animation_ax, 'Lateral Position (m)');
-                title(obj.animation_ax, 'Truck Platoon Animation');
-
-                % Add legend with truck labels
-                legend(obj.animation_ax, 'show');
-                legend(obj.animation_ax, 'Location', 'northeast');
+                ylim([-5, 5]); % Keep y limits as they were
             end
+
+            % Calculate safety distances for plotting
+            safety_history = obj.calculateSafetyHistory(positions, lengths);
+
+            % Calculate frame delay to match simulation time
+            frame_delay = diff(times(1:2));
 
             % Animation loop
             for frame = 1:num_frames
-                try
-                    % Find current platoon extents including truck lengths
-                    platoon_positions = positions(:,frame);
-                    platoon_ends = platoon_positions + lengths';
-                    platoon_front = max(platoon_ends);
-                    platoon_rear = min(platoon_positions);
+                % Update truck positions in animation
+                % Find the position range of all trucks in this frame
+                min_pos = min(positions(:,frame));
+                max_pos = max(positions(:,frame) + lengths'); % Include truck lengths
 
-                    % Calculate view window - fixed width that moves with platoon
-                    window_width = 200;  % Show 200m of road at a time
-                    window_center = (platoon_front + platoon_rear) / 2;
-                    x_min = window_center - window_width/2;
-                    x_max = window_center + window_width/2;
-
-                    % Adjust limits if near boundaries
-                    if x_min < 0
-                        x_min = 0;
-                        x_max = window_width;
-                    elseif x_max > obj.total_distance
-                        x_max = obj.total_distance;
-                        x_min = max(0, x_max - window_width);
-                    end
-
-                    % Update each truck
-                    for i = 1:num_trucks
-                        % Get current position for this truck
-                        x_start = positions(i,frame);
-                        x_end = x_start + lengths(i);
-
-                        % Update truck visualization
-                        x_coords = [x_start, x_end, x_end, x_start];
-                        y_coords = [-truck_width/2, -truck_width/2, truck_width/2, truck_width/2];
-
-                        % Update the patch
-                        set(obj.truck_patches(i), 'XData', x_coords, 'YData', y_coords);
-                    end
-
-                    % Update axis limits if valid
-                    valid_limits = isscalar(x_min) && isscalar(x_max) && ...
-                        isfinite(x_min) && isfinite(x_max) && ...
-                        (x_min < x_max);
-                    if valid_limits
-                        xlim(obj.animation_ax, [x_min, x_max]);
-                    end
-
-                    % Update time lines in all plots
-                    for i = 1:4
-                        set(obj.time_line(i), 'Value', times(frame));
-                    end
-
-                    % Update real-time plots
-                    for i = 1:num_trucks
-                        % Update velocity plot
-                        set(obj.velocity_lines(i), 'XData', times(1:frame), ...
-                            'YData', velocities(i,1:frame));
-
-                        % Update acceleration plot
-                        set(obj.accel_lines(i), 'XData', times(1:frame), ...
-                            'YData', accelerations(i,1:frame));
-
-                        % Update jerk plot
-                        set(obj.jerk_lines(i), 'XData', times(1:frame), ...
-                            'YData', jerks(i,1:frame));
-
-                        % Update safety plot
-                        if i < num_trucks
-                            set(obj.safety_lines(i), 'XData', times(1:frame), ...
-                                'YData', safety_history(i,1:frame));
-                        end
-                    end
-
-                    % Force immediate update of the display
-                    drawnow();
-
-                    % Add delay for animation timing
-                    if frame_delay > 0
-                        pause(frame_delay);
-                    end
-
-                catch ME
-                    warning(ME.identifier, '%s', ME.message);
-                    return;
+                % Update each truck
+                for i = 1:num_trucks
+                    x_start = positions(i,frame);
+                    x_end = positions(i,frame) + lengths(i);
+                    x_coords = [x_start, x_end, x_end, x_start];
+                    set(obj.truck_patches(i), 'XData', x_coords);
                 end
+
+                % Update view window to follow trucks - FIXED
+                window_center = (min_pos + max_pos) / 2;
+                new_xlim = [window_center - window_width/2, window_center + window_width/2];
+
+                % Ensure limits are valid and increasing
+                if new_xlim(1) < new_xlim(2)
+                    xlim(obj.animation_ax, new_xlim);
+                end
+
+                % Update time line in all plots
+                for i = 1:4
+                    set(obj.time_line(i), 'Value', times(frame));
+                end
+
+                % Update real-time plots with accumulated data up to current frame
+                for i = 1:num_trucks
+                    set(obj.velocity_lines(i), 'XData', times(1:frame), 'YData', velocities(i,1:frame));
+                    set(obj.accel_lines(i), 'XData', times(1:frame), 'YData', accelerations(i,1:frame));
+                    set(obj.jerk_lines(i), 'XData', times(1:frame), 'YData', jerks(i,1:frame));
+                    if i < num_trucks
+                        set(obj.safety_lines(i), 'XData', times(1:frame), 'YData', safety_history(i,1:frame));
+                    end
+                end
+
+                % Update progress bar
+                progress = frame / num_frames * 100;
+                obj.updateProgress(progress);
+
+                % Force drawing update
+                drawnow;
+
+                % Add delay to match simulation time
+                pause(frame_delay);
             end
 
-            % Final update
-            drawnow();
+            % Ensure final state is displayed
+            drawnow;
+
+            % Update progress bar to show completion
+            obj.updateProgress(100);
         end
     end
 end
