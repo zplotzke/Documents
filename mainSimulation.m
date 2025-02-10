@@ -110,10 +110,19 @@ classdef mainSimulation < handle
             obj.truckLengths = obj.config.truck.truck_lengths(:)';
             obj.truckWeights = obj.config.truck.truck_weights(:)';
 
+            % Calculate total platoon length for centering
+            total_platoon_length = sum(obj.truckLengths) + ...
+                (numTrucks - 1) * obj.config.truck.desired_gap;
+
+            % Start at position 200 for better visibility
+            view_center = 200;
+            start_position = view_center + total_platoon_length/2;
+
             % Set initial positions with proper spacing
-            for i = 1:numTrucks
-                obj.truckPositions(i) = 0 - (i-1) * ...
-                    (obj.truckLengths(i) + obj.config.truck.desired_gap);
+            obj.truckPositions(1) = start_position;
+            for i = 2:numTrucks
+                obj.truckPositions(i) = obj.truckPositions(i-1) - ...
+                    (obj.truckLengths(i-1) + obj.config.truck.desired_gap);
             end
         end
 
