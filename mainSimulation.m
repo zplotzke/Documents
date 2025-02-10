@@ -1,140 +1,192 @@
 classdef mainSimulation < handle
-    % MAINSIMULATION Main simulation class for truck platoon system
+    % MAINSIMULATION Class for truck platoon simulation
+    %
+    % This class handles the core simulation logic for a platoon of trucks,
+    % including dynamics, safety constraints, and logging.
+    %
+    % Properties:
+    %   config              - Configuration structure from getConfig
+    %   currentTime         - Current simulation time
+    %   timeHistory        - History of simulation states
     %
     % Author: zplotzke
-    % Created: 2025-02-08 04:05:42 UTC
+    % Last Modified: 2025-02-08 17:06:05 UTC
+    % Version: 1.0.1
 
-    properties (Access = private)
-        config              % Configuration parameters
-        logger             % Logger object
-        safetyMonitor      % Safety monitoring object
-        inputs             % Training data inputs
-        outputs            % Training data outputs
+    properties (SetAccess = private)
+        config          % Configuration structure from getConfig
+        currentTime    % Current simulation time
+        timeHistory    % History of simulation states
+    end
+
+    properties (Access = protected)
+        truckPositions     % Array of truck positions
+        truckVelocities    % Array of truck velocities
+        truckAccelerations % Array of truck accelerations
+        truckLengths       % Array of truck lengths
+        truckWeights       % Array of truck weights
+        isInitialized      % Flag to track initialization status
     end
 
     methods
-        function obj = mainSimulation(config)
-            obj.config = config;
-            obj.logger = Logger.getLogger('mainSimulation');
-            obj.safetyMonitor = SafetyMonitor(config, obj.logger);
+        function obj = mainSimulation()
+            % Constructor: Initialize simulation with configuration
+            obj.config = getConfig();
+            obj.currentTime = 0;
+            obj.isInitialized = false;
+            obj.initializeSimulation();
         end
 
-        function run(obj)
-            % Main execution method
+        function reset(obj)
+            % Reset simulation to initial state
+            obj.currentTime = 0;
+            obj.initializeSimulation();
+        end
+
+        function success = step(obj)
+            % Perform one simulation timestep
+            % Returns:
+            %   success - boolean indicating if step completed successfully
+
+            if ~obj.isInitialized
+                error('Simulation:NotInitialized', ...
+                    'Simulation must be initialized before stepping');
+            end
+
             try
-                % Generate training data
-                obj.generateTrainingData();
-
-                % Train the network
-                obj.trainNetwork();
-
+                dt = 1/obj.config.simulation.frame_rate;
+                obj.updateTruckDynamics(dt);
+                obj.checkSafetyConstraints();
+                obj.updateTimeHistory();
+                obj.currentTime = obj.currentTime + dt;
+                success = true;
             catch ME
-                obj.logger.error('Simulation failed: %s', ME.message);
+                success = false;
                 rethrow(ME);
             end
         end
 
-        function generateTrainingData(obj)
-            % Initialize training data arrays
-            numTimesteps = obj.config.simulation.frame_rate * obj.config.simulation.final_time;
-            numTrucks = obj.config.truck.num_trucks;
-            numFeatures = 4 * (numTrucks - 1);  % relative pos, vel, acc, jerk for each following truck
-            numSimulations = obj.config.simulation.num_random_simulations;
+        function state = getState(obj)
+            % Get current simulation state
+            % Returns:
+            %   state - Structure containing current simulation state
 
-            obj.inputs = zeros(numFeatures, numTimesteps, numSimulations);
-            obj.outputs = zeros(numFeatures, numTimesteps, numSimulations);
-
-            obj.logger.info('Starting random simulations for training data...');
-            obj.logger.info('Generating training data with parameters:');
-            obj.logger.info('- Number of trucks: %d', numTrucks);
-            obj.logger.info('- Number of relative pairs: %d', numTrucks - 1);
-            obj.logger.info('- Timesteps per simulation: %d', numTimesteps);
-            obj.logger.info('- Number of simulations: %d', numSimulations);
-
-            for sim = 1:numSimulations
-                obj.logger.info('Running simulation %d/%d', sim, numSimulations);
-                [input_sequence, output_sequence] = obj.runSimulation();
-                obj.inputs(:,:,sim) = input_sequence;
-                obj.outputs(:,:,sim) = output_sequence;
-            end
-
-            % Log final data dimensions
-            obj.logger.info('Training data dimensions:');
-            obj.logger.info('- Features per timestep: %d', numFeatures);
-            obj.logger.info('- Timesteps per sequence: %d', numTimesteps);
-            obj.logger.info('- Number of sequences: %d', numSimulations);
-            obj.logger.info('- Total data points: %d', numFeatures * numTimesteps * numSimulations);
-
-            % Save training data using object properties
-            obj.logger.info('Saving training data...');
-            inputs = obj.inputs;  % Create local copies for saving
-            outputs = obj.outputs;
-            save(obj.config.simulation.file_names.simulation_data, 'inputs', 'outputs', '-v7.3');
-            obj.logger.info('Training data generation complete');
+            state = struct(...
+                'time', obj.currentTime, ...
+                'positions', obj.truckPositions, ...
+                'velocities', obj.truckVelocities, ...
+                'lengths', obj.truckLengths, ...
+                'weights', obj.truckWeights, ...
+                'isValid', obj.checkSafetyConstraints());
         end
 
-        function trainNetwork(obj)
-            trainLSTMNetwork(obj.config, obj.logger);
+        function positions = getTruckPositions(obj)
+            % Get current truck positions
+            positions = obj.truckPositions;
+        end
+
+        function velocities = getTruckVelocities(obj)
+            % Get current truck velocities
+            velocities = obj.truckVelocities;
         end
     end
 
     methods (Access = private)
-        function [input_sequence, output_sequence] = runSimulation(obj)
-            % Initialize arrays for this simulation
-            numTimesteps = obj.config.simulation.frame_rate * obj.config.simulation.final_time;
+        function initializeSimulation(obj)
+            % Initialize or reinitialize simulation components
+            obj.initializeTrucks();
+            obj.initializeTimeHistory();
+            obj.isInitialized = true;
+        end
+
+        function initializeTrucks(obj)
+            % Initialize truck arrays with configuration parameters
             numTrucks = obj.config.truck.num_trucks;
-            numFeatures = 4 * (numTrucks - 1);
 
-            input_sequence = zeros(numFeatures, numTimesteps);
-            output_sequence = zeros(numFeatures, numTimesteps);  % Fixed dimension
+            % Initialize arrays
+            obj.truckPositions = zeros(1, numTrucks);
+            obj.truckVelocities = ones(1, numTrucks) * obj.config.truck.initial_speed;
+            obj.truckAccelerations = zeros(1, numTrucks);
+            obj.truckLengths = obj.config.truck.truck_lengths(:)';
+            obj.truckWeights = obj.config.truck.truck_weights(:)';
 
-            % Initialize truck states with random variations
-            positions = zeros(numTrucks, 1);
-            velocities = obj.config.truck.initial_speed * ones(numTrucks, 1) + randn(numTrucks, 1);
-            accelerations = zeros(numTrucks, 1);
-            jerks = zeros(numTrucks, 1);
+            % Set initial positions with proper spacing
+            for i = 1:numTrucks
+                obj.truckPositions(i) = 0 - (i-1) * ...
+                    (obj.truckLengths(i) + obj.config.truck.desired_gap);
+            end
+        end
 
-            % Simulation time step
-            dt = 1 / obj.config.simulation.frame_rate;
+        function initializeTimeHistory(obj)
+            % Initialize time history storage with initial state
+            obj.timeHistory = struct(...
+                'times', obj.currentTime, ...
+                'positions', obj.truckPositions(:), ...
+                'velocities', obj.truckVelocities(:), ...
+                'accelerations', obj.truckAccelerations(:));
+        end
 
-            % Run simulation
-            for t = 1:numTimesteps
-                % Update states
-                accelerations = accelerations + jerks * dt;
-                velocities = velocities + accelerations * dt;
-                positions = positions + velocities * dt;
+        function updateTruckDynamics(obj, dt)
+            % Update positions and velocities of all trucks
+            % Using basic kinematic equations:
+            % v = v0 + a*t
+            % x = x0 + v0*t + 0.5*a*t^2
 
-                % Calculate relative states for following trucks
-                rel_pos = diff(positions);
-                rel_vel = diff(velocities);
-                rel_acc = diff(accelerations);
-                rel_jerk = diff(jerks);
+            % Update velocities
+            obj.truckVelocities = obj.truckVelocities + ...
+                obj.truckAccelerations * dt;
 
-                % Pack states into feature vector
-                feature_idx = 1;
-                for i = 1:numTrucks-1
-                    input_sequence(feature_idx:feature_idx+3, t) = [
-                        rel_pos(i);
-                        rel_vel(i);
-                        rel_acc(i);
-                        rel_jerk(i)
-                        ];
-                    feature_idx = feature_idx + 4;
+            % Update positions
+            obj.truckPositions = obj.truckPositions + ...
+                obj.truckVelocities * dt + ...
+                0.5 * obj.truckAccelerations * dt^2;
+
+            % Apply velocity constraints
+            obj.truckVelocities = min(max(obj.truckVelocities, 0), ...
+                obj.config.truck.initial_speed + ...
+                obj.config.truck.max_relative_velocity);
+        end
+
+        function isValid = checkSafetyConstraints(obj)
+            % Verify safety constraints are maintained
+            % Returns:
+            %   isValid - boolean indicating if all constraints are satisfied
+
+            isValid = true;
+
+            % Check minimum distances between trucks
+            for i = 1:length(obj.truckPositions)-1
+                distance = obj.truckPositions(i) - ...
+                    obj.truckPositions(i+1) - ...
+                    obj.truckLengths(i);
+
+                if distance < obj.config.safety.min_safe_distance
+                    isValid = false;
+                    break;
                 end
-
-                % Check safety conditions
-                time = t * dt;
-                [is_safe, violations] = obj.safetyMonitor.checkSafetyConditions(positions, velocities, accelerations, jerks);
-                if ~is_safe
-                    obj.safetyMonitor.logViolations(violations, time);
-                end
-
-                % Update control inputs (jerks) based on relative states
-                jerks = -0.1 * accelerations - 0.5 * (velocities - obj.config.truck.initial_speed);
             end
 
-            % Set output sequence (for now, same as input for demonstration)
-            output_sequence = input_sequence;
+            % Check velocity constraints
+            if any(abs(obj.truckVelocities) > ...
+                    obj.config.truck.initial_speed + ...
+                    obj.config.truck.max_relative_velocity)
+                isValid = false;
+            end
+        end
+
+        function updateTimeHistory(obj)
+            % Update time history with current state
+            % Append current time
+            obj.timeHistory.times(end+1) = obj.currentTime;
+
+            % Append current positions as a new column
+            obj.timeHistory.positions = [obj.timeHistory.positions, obj.truckPositions(:)];
+
+            % Append current velocities as a new column
+            obj.timeHistory.velocities = [obj.timeHistory.velocities, obj.truckVelocities(:)];
+
+            % Append current accelerations as a new column
+            obj.timeHistory.accelerations = [obj.timeHistory.accelerations, obj.truckAccelerations(:)];
         end
     end
 end
