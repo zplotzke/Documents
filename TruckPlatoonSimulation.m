@@ -8,14 +8,14 @@ classdef TruckPlatoonSimulation < handle
     % - Data collection
     %
     % Author: zplotzke
-    % Last Modified: 2025-02-11 15:13:47 UTC
-    % Version: 1.0.0
+    % Last Modified: 2025-02-11 16:53:09 UTC
+    % Version: 1.0.6
 
     properties (SetAccess = private)
         config          % Simulation configuration
         currentTime    % Current simulation time
         timeHistory    % Array of time points
-        stateHistory   % History of all truck states
+        stateHistory   % Cell array of state structures
         logger         % Logger instance
     end
 
@@ -26,13 +26,19 @@ classdef TruckPlatoonSimulation < handle
     end
 
     methods
-        function obj = TruckPlatoonSimulation(config)
+        function obj = TruckPlatoonSimulation(varargin)
             % Constructor
-            if nargin < 1
-                config = config.getConfig();
-            end
-            obj.config = config;
+            % Usage: obj = TruckPlatoonSimulation() or obj = TruckPlatoonSimulation(config)
+
+            % Handle optional config parameter
             obj.logger = utils.Logger.getLogger('TruckPlatoonSim');
+
+            if nargin < 1 || isempty(varargin{1})
+                obj.logger.info('No config provided, using default configuration');
+                obj.config = config.getConfig();  % Using the function from the config package
+            else
+                obj.config = varargin{1};
+            end
 
             % Initialize simulation
             obj.resetSimulation();
@@ -42,7 +48,7 @@ classdef TruckPlatoonSimulation < handle
             % RESETSIMULATION Reset simulation to initial state
             obj.currentTime = 0;
             obj.timeHistory = [];
-            obj.stateHistory = [];
+            obj.stateHistory = {};  % Initialize as empty cell array
             obj.isSimFinished = false;
 
             % Set random seed for reproducibility
@@ -107,8 +113,8 @@ classdef TruckPlatoonSimulation < handle
         function history = getCompleteState(obj)
             % GETCOMPLETESTATE Get complete simulation history
             history = struct(...
-                'time', obj.timeHistory, ...
-                'state', obj.stateHistory ...
+                'timeHistory', obj.timeHistory, ...
+                'stateHistory', obj.stateHistory ...
                 );
         end
 
@@ -181,7 +187,11 @@ classdef TruckPlatoonSimulation < handle
         function recordState(obj)
             % Record current state in history
             obj.timeHistory(end+1) = obj.currentTime;
-            obj.stateHistory(end+1) = obj.getState();
+            if isempty(obj.stateHistory)
+                obj.stateHistory = {obj.getState()};
+            else
+                obj.stateHistory{end+1} = obj.getState();
+            end
         end
 
         function checkCompletion(obj)

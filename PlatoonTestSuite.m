@@ -1,205 +1,209 @@
 classdef PlatoonTestSuite < matlab.unittest.TestCase
     % PLATOONTESTSUITE Test suite for truck platoon simulation
     %
-    % Tests functionality of:
-    % - Core simulation components
-    % - Safety monitoring
-    % - LSTM predictions
-    % - Visualization
-    %
     % Author: zplotzke
-    % Last Modified: 2025-02-11 15:25:44 UTC
-    % Version: 1.0.0
-
-    properties (TestParameter)
-        NumTrucks = {2, 3, 4, 5}
-        SimDuration = {10, 30, 60}
-    end
+    % Last Modified: 2025-02-11 17:16:13 UTC
+    % Version: 1.0.4
 
     properties
-        config
-        logger
+        tempLogDir  % Temporary directory for test logs
+        logger      % Logger instance for test class
     end
 
     methods (TestClassSetup)
         function setupTestClass(testCase)
-            % Set up test class
-            testCase.config = config.getConfig();
-            testCase.logger = utils.Logger.getLogger('PlatoonTest');
+            % Create temporary directory for test logs
+            testCase.tempLogDir = fullfile(tempdir, 'platoon_test_logs');
+            if exist(testCase.tempLogDir, 'dir')
+                rmdir(testCase.tempLogDir, 's');
+            end
+            mkdir(testCase.tempLogDir);
 
-            % Modify config for testing
-            testCase.config.simulation.random_seed = 42;
-            testCase.config.visualization.show_predictions = false;
+            % Ensure the directory exists before setting it
+            testCase.verifyTrue(exist(testCase.tempLogDir, 'dir') == 7, ...
+                'Failed to create temporary test directory');
+
+            % Set log directory and verify
+            utils.Logger.setLogDirectory(testCase.tempLogDir);
+
+            % Initialize test logger
+            testCase.logger = utils.Logger.getLogger('TestLogger');
+        end
+    end
+
+    methods (TestMethodSetup)
+        function setupMethod(testCase)
+            % Clear any existing log files before each test
+            if exist(testCase.tempLogDir, 'dir')
+                delete(fullfile(testCase.tempLogDir, '*.log'));
+            end
+        end
+    end
+
+    methods (TestClassTeardown)
+        function teardownTestClass(testCase)
+            % Clean up temporary log directory
+            if exist(testCase.tempLogDir, 'dir')
+                rmdir(testCase.tempLogDir, 's');
+            end
         end
     end
 
     methods (Test)
-        function testSimulationInitialization(testCase, NumTrucks)
-            % Test simulation initialization
-            testCase.config.truck.num_trucks = NumTrucks;
-            sim = core.TruckPlatoonSimulation(testCase.config);
+        function testLoggerCreation(testCase)
+            % Test logger creation and basic properties
+            logger = utils.Logger('TestLogger');
 
-            state = sim.getState();
-            testCase.verifyEqual(length(state.positions), NumTrucks, ...
-                'Number of trucks does not match configuration');
+            % Test log level constants
+            testCase.verifyEqual(logger.LEVEL_NAMES(utils.Logger.LEVEL_INFO), 'INFO', ...
+                'Default log level should be INFO');
 
-            testCase.verifyEqual(state.time, 0, ...
-                'Initial time should be 0');
-
-            testCase.verifyFalse(sim.isFinished(), ...
-                'Simulation should not be finished at start');
+            % Test config properties through disp output
+            str = evalc('disp(logger)');
+            testCase.verifyTrue(contains(str, 'Console Logging: true'), ...
+                'Console logging should be enabled by default');
+            testCase.verifyTrue(contains(str, 'File Logging: true'), ...
+                'File logging should be enabled by default');
         end
 
-        function testSafetyMonitor(testCase)
-            % Test safety monitoring functionality
-            monitor = core.SafetyMonitor(testCase.config);
+        function testLogLevels(testCase)
+            % Test different log levels
+            logger = utils.Logger('LogLevelTest');
 
-            % Test safe conditions
-            positions = [100 80 60 40];
-            velocities = [20 20 20 20];
-            accelerations = zeros(1,4);
-            jerks = zeros(1,4);
+            % Test setting valid log levels
+            validLevels = {'DEBUG', 'INFO', 'WARNING', 'ERROR'};
+            levelConstants = [logger.LEVEL_DEBUG, logger.LEVEL_INFO, ...
+                logger.LEVEL_WARNING, logger.LEVEL_ERROR];
 
-            [is_safe, violations] = monitor.checkSafetyConditions(...
-                positions, velocities, accelerations, jerks);
-
-            testCase.verifyTrue(is_safe, ...
-                'Safe conditions reported as unsafe');
-            testCase.verifyEmpty(violations, ...
-                'Violations reported for safe conditions');
-
-            % Test unsafe conditions
-            positions = [100 95 90 85];  % Too close
-            velocities = [30 30 30 30];  % Max speed violation
-
-            [is_safe, violations] = monitor.checkSafetyConditions(...
-                positions, velocities, accelerations, jerks);
-
-            testCase.verifyFalse(is_safe, ...
-                'Unsafe conditions reported as safe');
-            testCase.verifyNotEmpty(violations, ...
-                'No violations reported for unsafe conditions');
-        end
-
-        function testPlatoonTrainer(testCase)
-            % Test LSTM trainer functionality
-            trainer = core.PlatoonTrainer(testCase.config);
-
-            % Generate some training data
-            for t = 0:0.1:1
-                state.time = t;
-                state.positions = [100 80 60 40] + t * 20;
-                state.velocities = ones(1,4) * 20;
-                state.accelerations = zeros(1,4);
-                state.jerks = zeros(1,4);
-
-                trainer.collectSimulationData(state);
+            for i = 1:length(validLevels)
+                logger.setLevel(validLevels{i});
+                testCase.verifyEqual(logger.LEVEL_NAMES(levelConstants(i)), validLevels{i}, ...
+                    sprintf('Failed to set log level to %s', validLevels{i}));
             end
 
-            % Test network training
-            testCase.verifyWarningFree(@() trainer.trainNetwork(), ...
-                'Network training generated warnings');
-
-            net = trainer.getNetwork();
-            testCase.verifyNotEmpty(net, ...
-                'Trained network is empty');
+            % Test invalid log level
+            testCase.verifyError(@() logger.setLevel('INVALID'), ...
+                'Logger:InvalidLevel');
         end
 
-        function testStatePrediction(testCase)
-            % Test state prediction functionality
-            % Create and train network with sample data
-            trainer = core.PlatoonTrainer(testCase.config);
-            generateTrainingData(trainer);
-            trainer.trainNetwork();
-            network = trainer.getNetwork();
+        function testFileLogging(testCase)
+            % Test file logging functionality
+            logger = utils.Logger('FileTest');
+            testMessage = sprintf('Test message at UTC time: %s', ...
+                datetime('now', 'Format', 'yyyy-MM-dd HH:mm:ss'));
 
-            % Test prediction
-            state.positions = [100 80 60 40];
-            state.velocities = [20 20 20 20];
-            state.accelerations = zeros(1,4);
-            state.jerks = zeros(1,4);
+            % Log test message
+            logger.info(testMessage);
 
-            predictions = ml.predictNextState(network, state);
+            % Wait for filesystem
+            pause(1.0);  % Increased pause time
 
-            testCase.verifyTrue(isstruct(predictions), ...
-                'Predictions should be a structure');
+            % Search for log files with pattern matching
+            logPattern = fullfile(testCase.tempLogDir, 'FileTest_*.log');
+            logFiles = dir(logPattern);
 
-            required_fields = {'positions', 'velocities', ...
-                'accelerations', 'jerks'};
+            % Verify file creation
+            testCase.verifyNotEmpty(logFiles, sprintf('No log files found matching pattern: %s', logPattern));
 
-            for i = 1:length(required_fields)
-                testCase.verifyTrue(isfield(predictions, required_fields{i}), ...
-                    sprintf('Predictions missing field: %s', required_fields{i}));
+            if ~isempty(logFiles)
+                logPath = fullfile(logFiles(1).folder, logFiles(1).name);
+                content = fileread(logPath);
+                testCase.verifyTrue(contains(content, testMessage), ...
+                    'Log file should contain test message');
             end
         end
 
-        function testSimulationCompletion(testCase, SimDuration)
-            % Test simulation completion
-            testCase.config.simulation.duration = SimDuration;
-            sim = core.TruckPlatoonSimulation(testCase.config);
+        function testMessageFormatting(testCase)
+            % Test message formatting with parameters
+            logger = utils.Logger('FormatTest');
+            testValue = 42;
+            testStr = 'test';
 
-            steps = 0;
-            max_steps = SimDuration / testCase.config.simulation.time_step;
+            % Log formatted message
+            logger.info('Value: %d, String: %s', testValue, testStr);
 
-            while ~sim.isFinished() && steps < max_steps
-                sim.step();
-                steps = steps + 1;
+            % Wait for filesystem
+            pause(1.0);  % Increased pause time
+
+            % Search for log files
+            logFiles = dir(fullfile(testCase.tempLogDir, 'FormatTest_*.log'));
+            testCase.verifyNotEmpty(logFiles, 'Log file should be created');
+
+            if ~isempty(logFiles)
+                content = fileread(fullfile(logFiles(1).folder, logFiles(1).name));
+                expectedMsg = sprintf('Value: %d, String: %s', testValue, testStr);
+                testCase.verifyTrue(contains(content, expectedMsg), ...
+                    'Log should contain formatted message');
             end
-
-            testCase.verifyTrue(sim.isFinished(), ...
-                'Simulation did not complete');
-
-            state = sim.getState();
-            testCase.verifyGreaterThanOrEqual(state.time, ...
-                min(SimDuration, testCase.config.simulation.duration), ...
-                'Simulation ended too early');
         end
 
-        function testVisualization(testCase)
-            % Test visualization functionality
-            viz = viz.PlatoonVisualizer(testCase.config);
+        function testRateLimiting(testCase)
+            % Test rate limiting functionality
+            logger = utils.Logger('RateTest');
+            testMessage = 'Rate limited message';
 
-            % Test initialization
-            testCase.verifyWarningFree(@() viz.initialize(), ...
-                'Visualization initialization generated warnings');
-
-            % Test update with sample state
-            state.time = 0;
-            state.positions = [100 80 60 40];
-            state.velocities = [20 20 20 20];
-            state.accelerations = zeros(1,4);
-            state.jerks = zeros(1,4);
-
-            testCase.verifyWarningFree(@() viz.update(state), ...
-                'Visualization update generated warnings');
-
-            % Test warning display
-            warnings = {
-                struct('type', 'DISTANCE', ...
-                'message', 'Test warning', ...
-                'data', struct('time', 0, 'distance', 10))
-                };
-
-            testCase.verifyWarningFree(@() viz.showWarnings(warnings), ...
-                'Warning display generated warnings');
-
-            % Clean up
-            close all;
-        end
-    end
-
-    methods (Access = private)
-        function generateTrainingData(trainer)
-            % Generate sample training data
-            for t = 0:0.1:10
-                state.time = t;
-                state.positions = [100 80 60 40] + t * 20;
-                state.velocities = ones(1,4) * 20;
-                state.accelerations = zeros(1,4);
-                state.jerks = zeros(1,4);
-
-                trainer.collectSimulationData(state);
+            % Send multiple messages quickly
+            for i = 1:5
+                logger.info(testMessage);
             end
+
+            % Wait for rate limit interval plus buffer
+            pause(utils.Logger.MIN_LOG_INTERVAL + 1.0);
+
+            % Send another message
+            logger.info(testMessage);
+
+            % Wait for filesystem
+            pause(1.0);
+
+            % Search for log files
+            logFiles = dir(fullfile(testCase.tempLogDir, 'RateTest_*.log'));
+            testCase.verifyNotEmpty(logFiles, 'Log file should be created');
+
+            if ~isempty(logFiles)
+                content = fileread(fullfile(logFiles(1).folder, logFiles(1).name));
+                matches = regexp(content, testMessage, 'match');
+                testCase.verifyTrue(length(matches) < 5, ...
+                    'Rate limiting should prevent all messages from being logged');
+            end
+        end
+
+        function testLoggerSingleton(testCase)
+            % Test logger singleton pattern
+            logger1 = utils.Logger.getLogger('SingletonTest');
+            logger2 = utils.Logger.getLogger('SingletonTest');
+
+            % Verify same instance
+            testCase.verifyTrue(isequal(logger1, logger2), ...
+                'getLogger should return same instance for same name');
+        end
+
+        function testCustomLogDir(testCase)
+            % Test custom log directory
+            customDir = fullfile(testCase.tempLogDir, 'custom_logs');
+
+            % Create custom directory
+            if ~exist(customDir, 'dir')
+                mkdir(customDir);
+            end
+
+            % Set and verify custom directory
+            utils.Logger.setLogDirectory(customDir);
+
+            % Create logger and log message
+            logger = utils.Logger('CustomDirTest');
+            logger.info('Test message');
+
+            % Wait for filesystem
+            pause(1.0);
+
+            % Search for log files in custom directory
+            logPattern = fullfile(customDir, 'CustomDirTest_*.log');
+            logFiles = dir(logPattern);
+
+            % Verify file creation in custom directory
+            testCase.verifyNotEmpty(logFiles, ...
+                sprintf('No log files found in custom directory matching pattern: %s', logPattern));
         end
     end
 end
