@@ -139,7 +139,7 @@ classdef PlatoonTrainer < handle
             Y = obj.reshapeForLSTM(Y);
         end
 
-        function data = normalizeData(obj, data)
+        function data = normalizeData(~, data)
             % Normalize data to [-1, 1] range
             dataMin = min(data, [], 2);
             dataMax = max(data, [], 2);

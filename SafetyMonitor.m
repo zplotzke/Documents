@@ -194,7 +194,7 @@ classdef SafetyMonitor < handle
             end
         end
 
-        function emergency = checkEmergencyConditions(obj, positions, velocities, accelerations)
+        function emergency = checkEmergencyConditions(obj, positions, velocities, ~)
             % Check for emergency conditions
             emergency = false;
 

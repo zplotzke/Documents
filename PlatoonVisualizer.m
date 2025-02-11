@@ -347,7 +347,7 @@ classdef PlatoonVisualizer < handle
         end
         
         % Final results plotting methods
-        function plotTrajectories(obj, results)
+        function plotTrajectories(~, results)
             % Plot complete trajectories
             plot(results.time, results.state.positions);
             xlabel('Time (s)');
@@ -355,7 +355,7 @@ classdef PlatoonVisualizer < handle
             grid on;
         end
         
-        function plotVelocityProfiles(obj, results)
+        function plotVelocityProfiles(~, results)
             % Plot velocity profiles
             plot(results.time, results.state.velocities);
             xlabel('Time (s)');
@@ -363,7 +363,7 @@ classdef PlatoonVisualizer < handle
             grid on;
         end
         
-        function plotSafetyMetrics(obj, results)
+        function plotSafetyMetrics(~, results)
             % Plot safety metrics
             % Calculate following distances
             distances = diff(results.state.positions);
@@ -373,7 +373,7 @@ classdef PlatoonVisualizer < handle
             grid on;
         end
         
-        function plotEfficiencyMetrics(obj, results)
+        function plotEfficiencyMetrics(~, results)
             % Plot efficiency metrics
             % Calculate fuel efficiency proxy (acceleration changes)
             accelerationChanges = diff(results.state.accelerations);
