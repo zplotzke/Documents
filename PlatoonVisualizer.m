@@ -7,7 +7,383 @@ classdef PlatoonVisualizer < handle
     %
     % Author: zplotzke
     % Last Modified: 2025-02-10 04:51:07 UTC
-    % Version: 1.5.8
+    % Version: 1.5.8classdef PlatoonVisualizer < handle
+    % PLATOONVISUALIZER Visualization system for truck platoon simulation
+    %
+    % Provides real-time visualization of:
+    % - Truck positions and movements
+    % - Safety zones and warnings
+    % - Performance metrics
+    % - Prediction visualizations
+    %
+    % Author: zplotzke
+    % Last Modified: 2025-02-11 15:20:58 UTC
+    % Version: 1.0.0
+    
+    properties (Access = private)
+        config          % Configuration settings
+        logger         % Logger instance
+        mainFigure     % Main figure handle
+        axesHandles    % Struct of axis handles
+        plotHandles    % Struct of plot handles
+        colorMap       % Color mapping for trucks
+        warnings       % Current active warnings
+        lastUpdate     % Time of last visualization update
+    end
+    
+    methods
+        function obj = PlatoonVisualizer(config)
+            % Constructor
+            obj.config = config;
+            obj.logger = utils.Logger.getLogger('PlatoonVisualizer');
+            obj.warnings = {};
+            obj.colorMap = obj.config.visualization.truck_colors;
+            
+            obj.logger.info('Platoon visualizer initialized');
+        end
+        
+        function initialize(obj)
+            % INITIALIZE Create and setup visualization windows
+            obj.createMainFigure();
+            obj.createSubplots();
+            obj.initializePlotHandles();
+            obj.lastUpdate = tic;
+            
+            obj.logger.info('Visualization initialized');
+        end
+        
+        function update(obj, state, predictions)
+            % UPDATE Update visualization with new state
+            if ~ishandle(obj.mainFigure)
+                obj.logger.warning('Main figure closed - reinitializing');
+                obj.initialize();
+            end
+            
+            % Check update rate
+            if toc(obj.lastUpdate) < 1/obj.config.visualization.plot_refresh_rate
+                return;
+            end
+            
+            try
+                % Update truck positions
+                obj.updateTruckPositions(state);
+                
+                % Update safety zones if enabled
+                if obj.config.visualization.show_safety_zones
+                    obj.updateSafetyZones(state);
+                end
+                
+                % Update predictions if available and enabled
+                if nargin > 2 && obj.config.visualization.show_predictions
+                    obj.updatePredictions(predictions);
+                end
+                
+                % Update metrics displays
+                obj.updateMetricsDisplay(state);
+                
+                % Refresh plots
+                drawnow;
+                obj.lastUpdate = tic;
+                
+            catch ME
+                obj.logger.error('Visualization update failed: %s', ME.message);
+            end
+        end
+        
+        function showWarnings(obj, warnings)
+            % SHOWWARNINGS Display warning indicators
+            obj.warnings = warnings;
+            obj.updateWarningDisplay();
+        end
+        
+        function showFinalResults(obj, results)
+            % SHOWFINALRESULTS Display final simulation results
+            try
+                % Create results figure
+                resultsFig = figure('Name', 'Simulation Results', ...
+                    'NumberTitle', 'off', ...
+                    'Position', [100 100 800 600]);
+                
+                % Plot complete trajectory
+                subplot(2,2,1);
+                obj.plotTrajectories(results);
+                title('Complete Trajectories');
+                
+                % Plot velocity profiles
+                subplot(2,2,2);
+                obj.plotVelocityProfiles(results);
+                title('Velocity Profiles');
+                
+                % Plot safety metrics
+                subplot(2,2,3);
+                obj.plotSafetyMetrics(results);
+                title('Safety Metrics');
+                
+                % Plot efficiency metrics
+                subplot(2,2,4);
+                obj.plotEfficiencyMetrics(results);
+                title('Efficiency Metrics');
+                
+                % Add timestamp
+                annotation('textbox', [0 0 1 0.1], ...
+                    'String', sprintf('Simulation completed at %s', ...
+                    datestr(now, 'yyyy-mm-dd HH:MM:SS')), ...
+                    'EdgeColor', 'none', ...
+                    'HorizontalAlignment', 'center');
+                
+            catch ME
+                obj.logger.error('Failed to show final results: %s', ME.message);
+            end
+        end
+    end
+    
+    methods (Access = private)
+        function createMainFigure(obj)
+            % Create main visualization figure
+            obj.mainFigure = figure('Name', 'Truck Platoon Simulation', ...
+                'NumberTitle', 'off', ...
+                'Position', [50 50 obj.config.visualization.window_size]);
+            
+            % Set close request function
+            set(obj.mainFigure, 'CloseRequestFcn', @obj.handleFigureClose);
+        end
+        
+        function createSubplots(obj)
+            % Create and organize subplots
+            obj.axesHandles = struct();
+            
+            % Main platoon view
+            obj.axesHandles.main = subplot(3,1,1);
+            title('Platoon Position');
+            xlabel('Distance (m)');
+            ylabel('Lane Position');
+            grid on;
+            
+            % Velocity plot
+            obj.axesHandles.velocity = subplot(3,1,2);
+            title('Velocities');
+            xlabel('Time (s)');
+            ylabel('Velocity (m/s)');
+            grid on;
+            
+            % Safety metrics
+            obj.axesHandles.safety = subplot(3,1,3);
+            title('Safety Metrics');
+            xlabel('Time (s)');
+            ylabel('Distance (m)');
+            grid on;
+        end
+        
+        function initializePlotHandles(obj)
+            % Initialize plot handles for dynamic updates
+            obj.plotHandles = struct();
+            numTrucks = obj.config.truck.num_trucks;
+            
+            % Initialize truck position plots
+            hold(obj.axesHandles.main, 'on');
+            for i = 1:numTrucks
+                obj.plotHandles.trucks(i) = plot(obj.axesHandles.main, ...
+                    0, 0, 's', ...
+                    'MarkerSize', 20, ...
+                    'MarkerFaceColor', obj.colorMap{i}, ...
+                    'MarkerEdgeColor', 'k');
+            end
+            hold(obj.axesHandles.main, 'off');
+            
+            % Initialize velocity plots
+            hold(obj.axesHandles.velocity, 'on');
+            for i = 1:numTrucks
+                obj.plotHandles.velocities(i) = plot(obj.axesHandles.velocity, ...
+                    [], [], ...
+                    'Color', obj.colorMap{i}, ...
+                    'LineWidth', 2);
+            end
+            hold(obj.axesHandles.velocity, 'off');
+            
+            % Initialize safety zone plots
+            if obj.config.visualization.show_safety_zones
+                hold(obj.axesHandles.main, 'on');
+                for i = 1:numTrucks
+                    obj.plotHandles.safetyZones(i) = plot(obj.axesHandles.main, ...
+                        [], [], ...
+                        'Color', [0.8 0.8 0.8], ...
+                        'LineStyle', '--');
+                end
+                hold(obj.axesHandles.main, 'off');
+            end
+        end
+        
+        function updateTruckPositions(obj, state)
+            % Update truck position plots
+            for i = 1:length(state.positions)
+                set(obj.plotHandles.trucks(i), ...
+                    'XData', state.positions(i), ...
+                    'YData', 0);
+            end
+            
+            % Update axis limits
+            xlim(obj.axesHandles.main, ...
+                [min(state.positions)-50, max(state.positions)+50]);
+        end
+        
+        function updateSafetyZones(obj, state)
+            % Update safety zone visualizations
+            for i = 1:length(state.positions)
+                safetyZone = obj.calculateSafetyZone(state, i);
+                set(obj.plotHandles.safetyZones(i), ...
+                    'XData', safetyZone.x, ...
+                    'YData', safetyZone.y);
+            end
+        end
+        
+        function updatePredictions(obj, predictions)
+            % Update prediction visualizations
+            if ~isfield(obj.plotHandles, 'predictions')
+                hold(obj.axesHandles.main, 'on');
+                for i = 1:size(predictions.positions, 1)
+                    obj.plotHandles.predictions(i) = plot(obj.axesHandles.main, ...
+                        [], [], ...
+                        'Color', obj.colorMap{i}, ...
+                        'LineStyle', ':');
+                end
+                hold(obj.axesHandles.main, 'off');
+            end
+            
+            for i = 1:size(predictions.positions, 1)
+                set(obj.plotHandles.predictions(i), ...
+                    'XData', predictions.positions(i,:), ...
+                    'YData', zeros(size(predictions.positions(i,:))));
+            end
+        end
+        
+        function updateMetricsDisplay(obj, state)
+            % Update metrics displays
+            % Update velocity plot
+            for i = 1:length(state.velocities)
+                xdata = get(obj.plotHandles.velocities(i), 'XData');
+                ydata = get(obj.plotHandles.velocities(i), 'YData');
+                
+                xdata = [xdata state.time];
+                ydata = [ydata state.velocities(i)];
+                
+                % Limit history length
+                if length(xdata) > obj.config.visualization.plot_history_length
+                    xdata = xdata(end-obj.config.visualization.plot_history_length+1:end);
+                    ydata = ydata(end-obj.config.visualization.plot_history_length+1:end);
+                end
+                
+                set(obj.plotHandles.velocities(i), ...
+                    'XData', xdata, ...
+                    'YData', ydata);
+            end
+            
+            % Update axis limits
+            xlim(obj.axesHandles.velocity, ...
+                [max(0, state.time-30), state.time]);
+            ylim(obj.axesHandles.velocity, ...
+                [0, obj.config.truck.max_velocity]);
+        end
+        
+        function updateWarningDisplay(obj)
+            % Update warning indicators
+            if ~isempty(obj.warnings)
+                for i = 1:length(obj.warnings)
+                    warning = obj.warnings{i};
+                    % Display warning indicator based on type
+                    switch warning.type
+                        case 'COLLISION'
+                            obj.showCollisionWarning(warning);
+                        case 'SPEED'
+                            obj.showSpeedWarning(warning);
+                        case 'DISTANCE'
+                            obj.showDistanceWarning(warning);
+                    end
+                end
+            end
+        end
+        
+        function handleFigureClose(obj, ~, ~)
+            % Handle figure close request
+            obj.logger.info('Visualization window closed by user');
+            delete(obj.mainFigure);
+        end
+        
+        function zone = calculateSafetyZone(obj, state, truckIndex)
+            % Calculate safety zone for a truck
+            position = state.positions(truckIndex);
+            velocity = state.velocities(truckIndex);
+            
+            % Safe following distance based on velocity
+            safeDistance = max(obj.config.safety.min_following_time * velocity, ...
+                obj.config.truck.min_safe_distance);
+            
+            % Create zone coordinates
+            zone.x = [position-safeDistance, position+safeDistance];
+            zone.y = [-0.5, 0.5];
+        end
+        
+        % Warning display methods
+        function showCollisionWarning(obj, warning)
+            % Display collision warning
+            rectangle(obj.axesHandles.main, ...
+                'Position', [warning.data.position-2, -1, 4, 2], ...
+                'EdgeColor', 'r', ...
+                'LineWidth', 2);
+        end
+        
+        function showSpeedWarning(obj, warning)
+            % Display speed warning
+            text(obj.axesHandles.velocity, ...
+                warning.data.time, warning.data.speed, ...
+                '!', 'Color', 'r', ...
+                'FontWeight', 'bold');
+        end
+        
+        function showDistanceWarning(obj, warning)
+            % Display distance warning
+            plot(obj.axesHandles.safety, ...
+                warning.data.time, warning.data.distance, ...
+                'r*', 'MarkerSize', 10);
+        end
+        
+        % Final results plotting methods
+        function plotTrajectories(obj, results)
+            % Plot complete trajectories
+            plot(results.time, results.state.positions);
+            xlabel('Time (s)');
+            ylabel('Position (m)');
+            grid on;
+        end
+        
+        function plotVelocityProfiles(obj, results)
+            % Plot velocity profiles
+            plot(results.time, results.state.velocities);
+            xlabel('Time (s)');
+            ylabel('Velocity (m/s)');
+            grid on;
+        end
+        
+        function plotSafetyMetrics(obj, results)
+            % Plot safety metrics
+            % Calculate following distances
+            distances = diff(results.state.positions);
+            plot(results.time(1:end-1), distances);
+            xlabel('Time (s)');
+            ylabel('Following Distance (m)');
+            grid on;
+        end
+        
+        function plotEfficiencyMetrics(obj, results)
+            % Plot efficiency metrics
+            % Calculate fuel efficiency proxy (acceleration changes)
+            accelerationChanges = diff(results.state.accelerations);
+            plot(results.time(1:end-1), abs(accelerationChanges));
+            xlabel('Time (s)');
+            ylabel('|Acceleration Change| (m/s³)');
+            grid on;
+        end
+    end
+end
 
     properties
         config          % Configuration structure
