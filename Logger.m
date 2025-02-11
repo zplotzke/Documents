@@ -1,8 +1,4 @@
 classdef Logger < handle
-    % LOGGER Simple logging utility class
-    %
-    % Author: zplotzke
-    % Created: 2025-02-08 03:48:47 UTC
 
     properties (Access = private)
         name        % Logger name
@@ -68,7 +64,7 @@ classdef Logger < handle
     end
 
     methods (Access = private)
-        function log(obj, level, message, varargin)
+        function log(~, level, message, varargin)
             % Internal logging function
             timestamp = datestr(now, 'dd-mmm-yyyy HH:MM:SS');  % Changed to match output format
             if isempty(varargin)

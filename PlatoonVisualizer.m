@@ -127,7 +127,7 @@ classdef PlatoonVisualizer < handle
             end
         end
 
-        function color = getTruckColor(obj, index)
+        function color = getTruckColor(~, index)
             % Get color for truck visualization
             colors = {[0.2 0.4 0.8],  % Blue
                 [0.8 0.2 0.2],  % Red
@@ -140,7 +140,7 @@ classdef PlatoonVisualizer < handle
     end
 
     methods (Access = private)
-        function initializeAnimationPlot(obj, state)
+        function initializeAnimationPlot(obj, ~)
             % Initialize animation plot with improved road visualization
 
             axes(obj.animation_ax);
@@ -226,7 +226,7 @@ classdef PlatoonVisualizer < handle
             xlim([-50, obj.total_distance + 50]);  % Add some margin at start and end
         end
 
-        function [accelerations, jerks] = calculateKinematics(obj, times, velocities)
+        function [accelerations, jerks] = calculateKinematics(~, times, velocities)
             % Calculate acceleration and jerk from velocity data
             dt = diff(times);
             accelerations = zeros(size(velocities));
@@ -382,7 +382,7 @@ classdef PlatoonVisualizer < handle
             obj.time_line(4) = xline(times(1), 'r-', 'LineWidth', 1.5, 'HandleVisibility', 'off');
         end
 
-        function safety_history = calculateSafetyHistory(obj, positions, lengths)
+        function safety_history = calculateSafetyHistory(~, positions, lengths)
             % Calculate safety distance history for all timesteps
             num_times = size(positions, 2);
             num_gaps = size(positions, 1) - 1;
