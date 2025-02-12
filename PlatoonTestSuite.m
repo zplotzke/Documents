@@ -1,209 +1,159 @@
 classdef PlatoonTestSuite < matlab.unittest.TestCase
     % PLATOONTESTSUITE Test suite for truck platoon simulation
     %
+    % Complete test suite for verifying platoon simulation core functionality:
+    % - System configuration and initialization
+    % - Vehicle dynamics and control
+    % - Communication and sensor systems
+    % - Safety features and emergency handling
+    % - Environment simulation
+    %
+    % Note: Logging functionality is tested separately in LoggerTest
+    %
     % Author: zplotzke
-    % Last Modified: 2025-02-11 17:16:13 UTC
-    % Version: 1.0.4
+    % Last Modified: 2025-02-11 20:56:04 UTC
+    % Version: 1.0.0
+
+    properties (TestParameter)
+        VehicleTypes = {'Truck', 'Car'}
+        PlatoonSizes = {1, 2, 3, 5}
+        SimModes = {'Normal', 'Emergency', 'Degraded'}
+        TerrainTypes = {'Flat', 'Hilly', 'Urban'}
+        WeatherConditions = {'Clear', 'Rain', 'Snow'}
+    end
 
     properties
-        tempLogDir  % Temporary directory for test logs
-        logger      % Logger instance for test class
+        platoon
+        vehicles
+        environment
+        logger
+        config
     end
 
     methods (TestClassSetup)
-        function setupTestClass(testCase)
-            % Create temporary directory for test logs
-            testCase.tempLogDir = fullfile(tempdir, 'platoon_test_logs');
-            if exist(testCase.tempLogDir, 'dir')
-                rmdir(testCase.tempLogDir, 's');
-            end
-            mkdir(testCase.tempLogDir);
-
-            % Ensure the directory exists before setting it
-            testCase.verifyTrue(exist(testCase.tempLogDir, 'dir') == 7, ...
-                'Failed to create temporary test directory');
-
-            % Set log directory and verify
-            utils.Logger.setLogDirectory(testCase.tempLogDir);
-
-            % Initialize test logger
-            testCase.logger = utils.Logger.getLogger('TestLogger');
+        function setupClass(testCase)
+            % Initialize test environment using existing config system
+            testCase.config = config.getConfig();
+            testCase.logger = utils.Logger.getLogger('PlatoonTest');
+            testCase.logger.setLevel('DEBUG');  % Set default level for tests
         end
     end
 
     methods (TestMethodSetup)
         function setupMethod(testCase)
-            % Clear any existing log files before each test
-            if exist(testCase.tempLogDir, 'dir')
-                delete(fullfile(testCase.tempLogDir, '*.log'));
-            end
-        end
-    end
-
-    methods (TestClassTeardown)
-        function teardownTestClass(testCase)
-            % Clean up temporary log directory
-            if exist(testCase.tempLogDir, 'dir')
-                rmdir(testCase.tempLogDir, 's');
-            end
+            % Fresh setup for each test
+            testCase.environment = utils.Environment();
+            testCase.platoon = utils.Platoon();
+            testCase.vehicles = {};
         end
     end
 
     methods (Test)
-        function testLoggerCreation(testCase)
-            % Test logger creation and basic properties
-            logger = utils.Logger('TestLogger');
-
-            % Test log level constants
-            testCase.verifyEqual(logger.LEVEL_NAMES(utils.Logger.LEVEL_INFO), 'INFO', ...
-                'Default log level should be INFO');
-
-            % Test config properties through disp output
-            str = evalc('disp(logger)');
-            testCase.verifyTrue(contains(str, 'Console Logging: true'), ...
-                'Console logging should be enabled by default');
-            testCase.verifyTrue(contains(str, 'File Logging: true'), ...
-                'File logging should be enabled by default');
+        % System Configuration Tests
+        function testSystemConfig(testCase)
+            testCase.verifyTrue(isfield(testCase.config, 'simulationMode'), ...
+                'Configuration missing simulationMode');
+            testCase.verifyTrue(isfield(testCase.config, 'updateRate'), ...
+                'Configuration missing updateRate');
+            testCase.verifyEqual(testCase.config.simulationMode, 'Normal');
+            testCase.verifyGreaterThan(testCase.config.updateRate, 0);
         end
 
-        function testLogLevels(testCase)
-            % Test different log levels
-            logger = utils.Logger('LogLevelTest');
-
-            % Test setting valid log levels
-            validLevels = {'DEBUG', 'INFO', 'WARNING', 'ERROR'};
-            levelConstants = [logger.LEVEL_DEBUG, logger.LEVEL_INFO, ...
-                logger.LEVEL_WARNING, logger.LEVEL_ERROR];
-
-            for i = 1:length(validLevels)
-                logger.setLevel(validLevels{i});
-                testCase.verifyEqual(logger.LEVEL_NAMES(levelConstants(i)), validLevels{i}, ...
-                    sprintf('Failed to set log level to %s', validLevels{i}));
-            end
-
-            % Test invalid log level
-            testCase.verifyError(@() logger.setLevel('INVALID'), ...
-                'Logger:InvalidLevel');
+        % Vehicle Tests
+        function testVehicleTypes(testCase, VehicleTypes)
+            vehicle = utils.Vehicle(VehicleTypes);
+            testCase.verifyClass(vehicle, 'utils.Vehicle');
+            testCase.verifyEqual(vehicle.getType(), VehicleTypes);
+            testCase.verifyTrue(vehicle.isOperational());
         end
 
-        function testFileLogging(testCase)
-            % Test file logging functionality
-            logger = utils.Logger('FileTest');
-            testMessage = sprintf('Test message at UTC time: %s', ...
-                datetime('now', 'Format', 'yyyy-MM-dd HH:mm:ss'));
+        % Environment Tests
+        function testEnvironmentSetup(testCase, TerrainTypes, WeatherConditions)
+            testCase.environment.setTerrain(TerrainTypes);
+            testCase.environment.setWeather(WeatherConditions);
 
-            % Log test message
-            logger.info(testMessage);
-
-            % Wait for filesystem
-            pause(1.0);  % Increased pause time
-
-            % Search for log files with pattern matching
-            logPattern = fullfile(testCase.tempLogDir, 'FileTest_*.log');
-            logFiles = dir(logPattern);
-
-            % Verify file creation
-            testCase.verifyNotEmpty(logFiles, sprintf('No log files found matching pattern: %s', logPattern));
-
-            if ~isempty(logFiles)
-                logPath = fullfile(logFiles(1).folder, logFiles(1).name);
-                content = fileread(logPath);
-                testCase.verifyTrue(contains(content, testMessage), ...
-                    'Log file should contain test message');
-            end
+            testCase.verifyEqual(testCase.environment.getTerrain(), TerrainTypes);
+            testCase.verifyEqual(testCase.environment.getWeather(), WeatherConditions);
+            testCase.verifyTrue(testCase.environment.isSimulationReady());
         end
 
-        function testMessageFormatting(testCase)
-            % Test message formatting with parameters
-            logger = utils.Logger('FormatTest');
-            testValue = 42;
-            testStr = 'test';
+        % Platoon Formation Tests
+        function testPlatoonFormation(testCase, PlatoonSizes)
+            vehicles = testCase.createVehicles(PlatoonSizes);
+            testCase.platoon.addVehicles(vehicles);
 
-            % Log formatted message
-            logger.info('Value: %d, String: %s', testValue, testStr);
+            testCase.verifyEqual(testCase.platoon.getSize(), PlatoonSizes);
+            testCase.verifyTrue(testCase.platoon.isFormationValid());
+        end
 
-            % Wait for filesystem
-            pause(1.0);  % Increased pause time
+        % Communication Tests
+        function testVehicleCommunication(testCase)
+            testCase.platoon.addVehicles(testCase.createVehicles(3));
 
-            % Search for log files
-            logFiles = dir(fullfile(testCase.tempLogDir, 'FormatTest_*.log'));
-            testCase.verifyNotEmpty(logFiles, 'Log file should be created');
+            message = struct('type', 'SPEED_CHANGE', 'value', 60);
+            success = testCase.platoon.broadcastMessage(message);
 
-            if ~isempty(logFiles)
-                content = fileread(fullfile(logFiles(1).folder, logFiles(1).name));
-                expectedMsg = sprintf('Value: %d, String: %s', testValue, testStr);
-                testCase.verifyTrue(contains(content, expectedMsg), ...
-                    'Log should contain formatted message');
+            testCase.verifyTrue(success, 'Message broadcast failed');
+            testCase.verifyEqual(testCase.platoon.getLastMessage(), message);
+        end
+
+        % Sensor Fusion Tests
+        function testSensorFusion(testCase)
+            vehicle = utils.Vehicle('Truck');
+            sensorData = vehicle.getSensorData();
+
+            testCase.verifyTrue(isstruct(sensorData));
+            testCase.verifyField(sensorData, 'position');
+            testCase.verifyField(sensorData, 'velocity');
+            testCase.verifyField(sensorData, 'acceleration');
+        end
+
+        % Control System Tests
+        function testControlSystem(testCase)
+            controller = utils.PlatoonController();
+            vehicle = utils.Vehicle('Truck');
+
+            controller.setTarget(vehicle, struct('speed', 60, 'gap', 20));
+            response = controller.getControlOutput(vehicle);
+
+            testCase.verifyTrue(isstruct(response));
+            testCase.verifyField(response, 'throttle');
+            testCase.verifyField(response, 'brake');
+            testCase.verifyField(response, 'steering');
+        end
+
+        % Safety System Tests
+        function testSafetySystems(testCase, SimModes)
+            testCase.platoon.addVehicles(testCase.createVehicles(3));
+            testCase.platoon.setMode(SimModes);
+
+            if strcmp(SimModes, 'Emergency')
+                testCase.verifyTrue(testCase.platoon.isEmergencyMode());
+                testCase.verifyTrue(all([testCase.platoon.vehicles.isBraking]));
             end
         end
 
-        function testRateLimiting(testCase)
-            % Test rate limiting functionality
-            logger = utils.Logger('RateTest');
-            testMessage = 'Rate limited message';
+        % Performance Tests
+        function testSystemPerformance(testCase)
+            testCase.platoon.addVehicles(testCase.createVehicles(5));
 
-            % Send multiple messages quickly
-            for i = 1:5
-                logger.info(testMessage);
-            end
+            tic;
+            testCase.platoon.updateState();
+            updateTime = toc;
 
-            % Wait for rate limit interval plus buffer
-            pause(utils.Logger.MIN_LOG_INTERVAL + 1.0);
-
-            % Send another message
-            logger.info(testMessage);
-
-            % Wait for filesystem
-            pause(1.0);
-
-            % Search for log files
-            logFiles = dir(fullfile(testCase.tempLogDir, 'RateTest_*.log'));
-            testCase.verifyNotEmpty(logFiles, 'Log file should be created');
-
-            if ~isempty(logFiles)
-                content = fileread(fullfile(logFiles(1).folder, logFiles(1).name));
-                matches = regexp(content, testMessage, 'match');
-                testCase.verifyTrue(length(matches) < 5, ...
-                    'Rate limiting should prevent all messages from being logged');
-            end
+            maxUpdateTime = 0.01; % 10ms maximum update time
+            testCase.verifyLessThan(updateTime, maxUpdateTime, ...
+                'System update time exceeds performance requirement');
         end
+    end
 
-        function testLoggerSingleton(testCase)
-            % Test logger singleton pattern
-            logger1 = utils.Logger.getLogger('SingletonTest');
-            logger2 = utils.Logger.getLogger('SingletonTest');
-
-            % Verify same instance
-            testCase.verifyTrue(isequal(logger1, logger2), ...
-                'getLogger should return same instance for same name');
-        end
-
-        function testCustomLogDir(testCase)
-            % Test custom log directory
-            customDir = fullfile(testCase.tempLogDir, 'custom_logs');
-
-            % Create custom directory
-            if ~exist(customDir, 'dir')
-                mkdir(customDir);
+    methods (Access = private)
+        function vehicles = createVehicles(testCase, count)
+            % Helper method to create test vehicles
+            vehicles = cell(1, count);
+            for i = 1:count
+                vehicles{i} = utils.Vehicle('Truck');
             end
-
-            % Set and verify custom directory
-            utils.Logger.setLogDirectory(customDir);
-
-            % Create logger and log message
-            logger = utils.Logger('CustomDirTest');
-            logger.info('Test message');
-
-            % Wait for filesystem
-            pause(1.0);
-
-            % Search for log files in custom directory
-            logPattern = fullfile(customDir, 'CustomDirTest_*.log');
-            logFiles = dir(logPattern);
-
-            % Verify file creation in custom directory
-            testCase.verifyNotEmpty(logFiles, ...
-                sprintf('No log files found in custom directory matching pattern: %s', logPattern));
         end
     end
 end
