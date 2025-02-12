@@ -8,8 +8,8 @@ classdef TruckPlatoonSimulation < handle
     % - Data collection
     %
     % Author: zplotzke
-    % Last Modified: 2025-02-11 16:53:09 UTC
-    % Version: 1.0.6
+    % Last Modified: 2025-02-12 02:03:16 UTC
+    % Version: 1.0.7
 
     properties (SetAccess = private)
         config          % Simulation configuration
@@ -132,8 +132,21 @@ classdef TruckPlatoonSimulation < handle
 
             for i = 1:numTrucks
                 obj.trucks(i).position = -(i-1) * obj.config.truck.initial_spacing;
-                obj.trucks(i).velocity = 0;
-                obj.trucks(i).acceleration = 0;
+
+                % Initialize velocity from config or default to 0
+                if isfield(obj.config.truck, 'initial_velocity')
+                    obj.trucks(i).velocity = obj.config.truck.initial_velocity;
+                else
+                    obj.trucks(i).velocity = 0;
+                end
+
+                % Initialize acceleration from config or default to 0
+                if isfield(obj.config.truck, 'constant_acceleration')
+                    obj.trucks(i).acceleration = obj.config.truck.constant_acceleration;
+                else
+                    obj.trucks(i).acceleration = 0;
+                end
+
                 obj.trucks(i).jerk = 0;
                 obj.trucks(i).length = obj.config.truck.min_length;
                 obj.trucks(i).weight = obj.config.truck.min_weight;
@@ -155,8 +168,13 @@ classdef TruckPlatoonSimulation < handle
                     obj.trucks(i).acceleration * dt + ...
                     0.5 * obj.trucks(i).jerk * dt^2;
 
-                obj.trucks(i).acceleration = obj.trucks(i).acceleration + ...
-                    obj.trucks(i).jerk * dt;
+                % Maintain constant acceleration if specified in config
+                if isfield(obj.config.truck, 'constant_acceleration')
+                    obj.trucks(i).acceleration = obj.config.truck.constant_acceleration;
+                else
+                    obj.trucks(i).acceleration = obj.trucks(i).acceleration + ...
+                        obj.trucks(i).jerk * dt;
+                end
 
                 % Apply constraints
                 obj.applyConstraints(i);
@@ -171,10 +189,12 @@ classdef TruckPlatoonSimulation < handle
             truck.velocity = min(max(truck.velocity, 0), ...
                 obj.config.truck.max_velocity);
 
-            % Acceleration constraints
-            truck.acceleration = min(max(truck.acceleration, ...
-                obj.config.truck.max_deceleration), ...
-                obj.config.truck.max_acceleration);
+            % Acceleration constraints (skip if constant acceleration is set)
+            if ~isfield(obj.config.truck, 'constant_acceleration')
+                truck.acceleration = min(max(truck.acceleration, ...
+                    obj.config.truck.max_deceleration), ...
+                    obj.config.truck.max_acceleration);
+            end
 
             % Jerk constraints
             truck.jerk = min(max(truck.jerk, ...
