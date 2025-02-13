@@ -15,15 +15,12 @@ try
     logger = utils.Logger.getLogger('Main');
     logger.info('Starting truck platoon simulation');
 
-    % Get configuration
-    config = config.getConfig();
-
     % Initialize components without passing config
     visualizer = viz.PlatoonVisualizer();
     safety_monitor = core.SafetyMonitor();
     trainer = core.PlatoonTrainer();
 
-    % Initialize simulation without config
+    % Initialize simulation without config parameter
     sim = core.TruckPlatoonSimulation();
 
     % Phase 1: Run 10 random training simulations

@@ -32,14 +32,13 @@ classdef WarningSystem < handle
 
     methods
         function obj = WarningSystem()
-            % Constructor
             % Get logger instance first
             obj.logger = utils.Logger.getLogger('WarningSystem');
 
             % Get configuration directly
             obj.config = config.getConfig();
 
-            % Initialize warning tracking
+            % Initialize warning tracking using containers.Map
             obj.initializeWarningTypes();
             obj.resetWarningCounters();
 

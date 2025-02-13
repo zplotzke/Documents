@@ -35,19 +35,6 @@ classdef PlatoonTrainer < handle
                 obj.network = ml.LSTMNetwork();
                 obj.initializeDataStructures();
 
-                % Set network dimensions based on truck config
-                numTrucks = obj.config.truck.num_trucks;
-                numFeatures = 4;  % positions, velocities, accelerations, jerks
-                inputSize = numFeatures * numTrucks;
-                hiddenSize = obj.config.training.lstm_hidden_units;
-                outputSize = inputSize;
-
-                % Initialize network
-                obj.network = ml.LSTMNetwork();
-
-                % Initialize data structures
-                obj.initializeDataStructures();
-
                 % Initialize public properties
                 obj.IsNetworkTrained = false;
                 obj.DatasetSize = 0;
