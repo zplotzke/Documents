@@ -159,7 +159,7 @@ classdef SafetyMonitor < handle
             end
         end
 
-        function [is_safe, violations] = checkEmergencyConditions(obj, positions, velocities, accelerations, jerks)
+        function [is_safe, violations] = checkEmergencyConditions(obj, positions, velocities, accelerations, ~)
             % Check for emergency conditions
             is_safe = true;
             violations = {};
