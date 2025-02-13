@@ -39,7 +39,7 @@ classdef WarningSystem < handle
             % Get configuration directly
             obj.config = config.getConfig();
 
-            % Initialize warning tracking using containers.Map
+            % Initialize warning tracking
             obj.initializeWarningTypes();
             obj.resetWarningCounters();
 

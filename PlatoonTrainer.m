@@ -31,6 +31,10 @@ classdef PlatoonTrainer < handle
                 % Get configuration directly
                 obj.config = config.getConfig();
 
+                % Initialize components
+                obj.network = ml.LSTMNetwork();
+                obj.initializeDataStructures();
+
                 % Set network dimensions based on truck config
                 numTrucks = obj.config.truck.num_trucks;
                 numFeatures = 4;  % positions, velocities, accelerations, jerks

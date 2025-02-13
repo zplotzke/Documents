@@ -23,6 +23,9 @@ try
     safety_monitor = core.SafetyMonitor();
     trainer = core.PlatoonTrainer();
 
+    % Initialize simulation without config
+    sim = core.TruckPlatoonSimulation();
+
     % Phase 1: Run 10 random training simulations
     logger.info('Starting training data collection phase...');
     runTrainingSimulations(config, trainer, safety_monitor, logger);

@@ -23,7 +23,6 @@ classdef SafetyMonitor < handle
     methods
         function obj = SafetyMonitor()
             % Constructor
-
             % Get logger instance
             obj.logger = utils.Logger.getLogger('SafetyMonitor');
 
