@@ -2,8 +2,8 @@ classdef PlatoonTrainer < handle
     % PLATOONTRAINER Training management for truck platoon LSTM network
     %
     % Author: zplotzke
-    % Last Modified: 2025-02-12 17:38:14 UTC
-    % Version: 2.0.4
+    % Last Modified: 2025-02-13 02:00:47 UTC
+    % Version: 2.0.6
 
     properties (SetAccess = private, GetAccess = public)
         IsNetworkTrained  % Boolean indicating if network is trained
@@ -23,36 +23,25 @@ classdef PlatoonTrainer < handle
     end
 
     methods
-        function obj = PlatoonTrainer(varargin)
+        function obj = PlatoonTrainer()
             try
-                % Handle optional configuration parameter
-                if nargin < 1 || isempty(varargin{1})
-                    obj.logger = utils.Logger.getLogger('PlatoonTrainer');
-                    obj.logger.info('No config provided, using default configuration');
-                    obj.config = config.getConfig();
-                else
-                    obj.config = varargin{1};
-                    % Validate against global config
-                    globalConfig = config.getConfig();
-                    requiredFields = {'lstm_hidden_units', 'max_epochs', 'mini_batch_size', ...
-                        'learning_rate', 'gradient_threshold', 'train_split_ratio'};
-                    for i = 1:length(requiredFields)
-                        field = requiredFields{i};
-                        if ~isfield(obj.config.training, field) || ...
-                                obj.config.training.(field) ~= globalConfig.training.(field)
-                            warning('PlatoonTrainer:ConfigMismatch', ...
-                                'Training config %s differs from global config', field);
-                        end
-                    end
-                end
-
-                % Initialize components
-                if ~isfield(obj.config, 'training')
-                    error('PlatoonTrainer:ConfigError', 'Configuration missing training section');
-                end
-
+                % Initialize logger first
                 obj.logger = utils.Logger.getLogger('PlatoonTrainer');
+
+                % Get configuration directly
+                obj.config = config.getConfig();
+
+                % Set network dimensions based on truck config
+                numTrucks = obj.config.truck.num_trucks;
+                numFeatures = 4;  % positions, velocities, accelerations, jerks
+                inputSize = numFeatures * numTrucks;
+                hiddenSize = obj.config.training.lstm_hidden_units;
+                outputSize = inputSize;
+
+                % Initialize network
                 obj.network = ml.LSTMNetwork();
+
+                % Initialize data structures
                 obj.initializeDataStructures();
 
                 % Initialize public properties
@@ -77,7 +66,6 @@ classdef PlatoonTrainer < handle
             end
         end
 
-
         function collectSimulationData(obj, state)
             % COLLECTSIMULATIONDATA Collect state data from simulation
             if obj.IsNetworkTrained
@@ -101,9 +89,6 @@ classdef PlatoonTrainer < handle
 
                 % Split into training and validation sets
                 [XTrain, YTrain, XVal, YVal] = obj.splitTrainingData(X, Y);
-
-                % Configure LSTM network
-                obj.configureNetwork();
 
                 % Train network
                 obj.logger.info('Starting LSTM network training...');
@@ -206,13 +191,6 @@ classdef PlatoonTrainer < handle
 
             obj.logger.debug('Final shapes: X=%s, Y=%s', ...
                 mat2str(size(X)), mat2str(size(Y)));
-
-            % Validate data is not empty
-            if isempty(X) || isempty(Y)
-                error('PlatoonTrainer:EmptyProcessedData', ...
-                    'Data processing resulted in empty arrays: X=%s, Y=%s', ...
-                    mat2str(size(X)), mat2str(size(Y)));
-            end
         end
 
         function data = normalizeData(obj, data)
@@ -230,7 +208,7 @@ classdef PlatoonTrainer < handle
                 range(constFeatures) = 1;
             end
 
-            % Store normalization parameters for later use
+            % Store normalization parameters
             obj.preprocessStats.dataMin = dataMin;
             obj.preprocessStats.dataMax = dataMax;
 
@@ -280,19 +258,6 @@ classdef PlatoonTrainer < handle
             YVal = Y(:,:,valIdx);
         end
 
-        function configureNetwork(obj)
-            % Configure LSTM network architecture
-            layers = [
-                sequenceInputLayer(size(obj.trainingData.positions,1) * 4)
-                lstmLayer(obj.config.training.lstm_hidden_units, 'OutputMode', 'sequence')
-                dropoutLayer(0.2)
-                fullyConnectedLayer(size(obj.trainingData.positions,1) * 4)
-                regressionLayer
-                ];
-
-            obj.network = layers;
-        end
-
         function [net, metrics] = trainLSTM(obj, XTrain, YTrain, XVal, YVal)
             % Train LSTM network with improved regularization
             options = trainingOptions('adam', ...
@@ -301,12 +266,12 @@ classdef PlatoonTrainer < handle
                 'InitialLearnRate', obj.config.training.learning_rate, ...
                 'GradientThreshold', obj.config.training.gradient_threshold, ...
                 'ValidationData', {XVal, YVal}, ...
-                'ValidationFrequency', 10, ...         % More frequent validation
-                'ValidationPatience', 10, ...          % More patience
-                'L2Regularization', 0.001, ...        % Add L2 regularization
-                'LearnRateSchedule', 'piecewise', ... % Learning rate schedule
-                'LearnRateDropPeriod', 20, ...        % Drop learning rate every 20 epochs
-                'LearnRateDropFactor', 0.5, ...       % Halve the learning rate
+                'ValidationFrequency', 10, ...
+                'ValidationPatience', 10, ...
+                'L2Regularization', 0.001, ...
+                'LearnRateSchedule', 'piecewise', ...
+                'LearnRateDropPeriod', 20, ...
+                'LearnRateDropFactor', 0.5, ...
                 'Verbose', false, ...
                 'Plots', 'training-progress');
 

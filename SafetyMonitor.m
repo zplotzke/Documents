@@ -8,8 +8,8 @@ classdef SafetyMonitor < handle
     % - Emergency situations
     %
     % Author: zplotzke
-    % Last Modified: 2025-02-11 16:43:36 UTC
-    % Version: 1.0.6
+    % Last Modified: 2025-02-13 02:03:01 UTC
+    % Version: 1.0.8
 
     properties (SetAccess = private, GetAccess = public)
         config      % Configuration parameters
@@ -21,23 +21,17 @@ classdef SafetyMonitor < handle
     end
 
     methods
-        function obj = SafetyMonitor(varargin)
+        function obj = SafetyMonitor()
             % Constructor
-            % Usage: obj = SafetyMonitor() or obj = SafetyMonitor(config)
 
             % Get logger instance
             obj.logger = utils.Logger.getLogger('SafetyMonitor');
 
-            % Handle optional config parameter
-            if nargin < 1 || isempty(varargin{1})
-                obj.logger.info('No config provided, using default configuration');
-                obj.config = config.getConfig();
-            else
-                obj.config = varargin{1};
-            end
+            % Get configuration directly
+            obj.config = config.getConfig();
 
             % Initialize warning system
-            obj.warnings = utils.WarningSystem(obj.config);
+            obj.warnings = utils.WarningSystem();
             obj.logger.info('Safety monitor initialized');
         end
 

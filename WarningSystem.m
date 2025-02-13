@@ -8,8 +8,8 @@ classdef WarningSystem < handle
     % - Emergency brake warnings
     %
     % Author: zplotzke
-    % Last Modified: 2025-02-11 16:24:27 UTC
-    % Version: 1.0.3
+    % Last Modified: 2025-02-13 02:07:26 UTC
+    % Version: 1.0.5
 
     properties (Access = private)
         config              % Configuration settings
@@ -31,20 +31,13 @@ classdef WarningSystem < handle
     end
 
     methods
-        function obj = WarningSystem(varargin)
+        function obj = WarningSystem()
             % Constructor
-            % Usage: obj = WarningSystem() or obj = WarningSystem(config)
-
             % Get logger instance first
             obj.logger = utils.Logger.getLogger('WarningSystem');
 
-            % Handle optional config parameter
-            if nargin < 1 || isempty(varargin{1})
-                obj.logger.info('No config provided, using default configuration');
-                obj.config = config.getConfig();
-            else
-                obj.config = varargin{1};
-            end
+            % Get configuration directly
+            obj.config = config.getConfig();
 
             % Initialize warning tracking using containers.Map
             obj.initializeWarningTypes();
@@ -180,19 +173,27 @@ classdef WarningSystem < handle
         end
 
         function handleCollisionWarning(obj, warning)
+            % Handle collision warnings (highest priority)
             obj.logger.error('COLLISION WARNING: %s', warning.message);
+            % Additional collision-specific handling could be added here
         end
 
         function handleEmergencyBrakeWarning(obj, warning)
+            % Handle emergency brake warnings
             obj.logger.warning('EMERGENCY BRAKE: %s', warning.message);
+            % Additional emergency brake-specific handling could be added here
         end
 
         function handleDistanceWarning(obj, warning)
+            % Handle distance violation warnings
             obj.logger.warning('DISTANCE VIOLATION: %s', warning.message);
+            % Additional distance-specific handling could be added here
         end
 
         function handleSpeedWarning(obj, warning)
+            % Handle speed violation warnings
             obj.logger.warning('SPEED VIOLATION: %s', warning.message);
+            % Additional speed-specific handling could be added here
         end
     end
 end

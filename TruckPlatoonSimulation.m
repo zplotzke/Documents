@@ -8,11 +8,11 @@ classdef TruckPlatoonSimulation < handle
     % - Data collection
     %
     % Author: zplotzke
-    % Last Modified: 2025-02-12 02:03:16 UTC
-    % Version: 1.0.7
+    % Last Modified: 2025-02-13 02:09:54 UTC
+    % Version: 1.0.9
 
     properties (SetAccess = private)
-        config          % Simulation configuration
+        config          % Configuration parameters
         currentTime    % Current simulation time
         timeHistory    % Array of time points
         stateHistory   % Cell array of state structures
@@ -26,19 +26,13 @@ classdef TruckPlatoonSimulation < handle
     end
 
     methods
-        function obj = TruckPlatoonSimulation(varargin)
+        function obj = TruckPlatoonSimulation()
             % Constructor
-            % Usage: obj = TruckPlatoonSimulation() or obj = TruckPlatoonSimulation(config)
-
-            % Handle optional config parameter
+            % Get logger instance
             obj.logger = utils.Logger.getLogger('TruckPlatoonSim');
 
-            if nargin < 1 || isempty(varargin{1})
-                obj.logger.info('No config provided, using default configuration');
-                obj.config = config.getConfig();  % Using the function from the config package
-            else
-                obj.config = varargin{1};
-            end
+            % Get configuration directly
+            obj.config = config.getConfig();
 
             % Initialize simulation
             obj.resetSimulation();
