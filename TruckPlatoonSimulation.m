@@ -8,11 +8,11 @@ classdef TruckPlatoonSimulation < handle
     % - Data collection
     %
     % Author: zplotzke
-    % Last Modified: 2025-02-13 02:09:54 UTC
-    % Version: 1.0.9
+    % Last Modified: 2025-02-13 02:57:08 UTC
+    % Version: 1.0.8
 
     properties (SetAccess = private)
-        config          % Configuration parameters
+        config          % Simulation configuration
         currentTime    % Current simulation time
         timeHistory    % Array of time points
         stateHistory   % Cell array of state structures
