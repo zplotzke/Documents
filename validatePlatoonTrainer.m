@@ -1,181 +1,141 @@
-function validatePlatoonTrainer
-% VALIDATEPLATOONTRAINER Validation tests for PlatoonTrainer class
-%
-% Author: zplotzke
-% Last Modified: 2025-02-13 01:58:52 UTC
-% Version: 1.0.16
-
-% Initialize logger
-logger = utils.Logger.getLogger('validatePlatoonTrainer');
-logger.info('Starting PlatoonTrainer validation');
-
-% Get configuration
-config = config.getConfig();
-
-% Initialize trainer directly with no config parameter
-trainer = core.PlatoonTrainer();
-
-% Display configuration using direct network access
-fprintf('\nConfiguration:\n');
-fprintf('Network Architecture:\n');
-network = trainer.getNetwork();
-fprintf('  - Input size: %d\n', network.InputSize);
-fprintf('  - Hidden size: %d\n', network.HiddenSize);
-fprintf('  - Output size: %d\n', network.OutputSize);
-
-fprintf('\nTraining:\n');
-fprintf('  - Max epochs: %d\n', config.training.max_epochs);
-fprintf('  - Batch size: %d\n', config.training.mini_batch_size);
-fprintf('  - Learning rate: %.4f\n', config.training.learning_rate);
-fprintf('  - Train split: %.1f%%\n', config.training.train_split_ratio * 100);
-
-fprintf('\nSimulation:\n');
-fprintf('  - Time step: %.2f s\n', config.simulation.time_step);
-fprintf('  - Duration: %.1f s\n', config.simulation.duration);
-fprintf('  - Trucks: %d\n', config.truck.num_trucks);
-fprintf('  - Initial spacing: %.1f m\n', config.truck.initial_spacing);
-
-% Generate synthetic test data
-state = struct(...
-    'time', 0.0, ...
-    'positions', zeros(config.truck.num_trucks, 1), ...
-    'velocities', ones(config.truck.num_trucks, 1), ...
-    'accelerations', 0.1*ones(config.truck.num_trucks, 1), ...
-    'jerks', zeros(config.truck.num_trucks, 1));
-
-% Collect simulation data with realistic behavior
-t = 0:config.simulation.time_step:config.simulation.duration;
-for i = 1:length(t)
-    state.time = t(i);
-
-    % Lead vehicle follows a varying speed profile
-    lead_speed = 1 + 0.3 * sin(0.5*t(i)) + 0.1 * cos(2*t(i));
-
-    % Follower vehicles try to maintain spacing
-    for v = 1:config.truck.num_trucks
-        if v == 1
-            target_speed = lead_speed;
-        else
-            % Try to maintain constant spacing with preceding vehicle
-            spacing = state.positions(v-1) - state.positions(v);
-            target_speed = state.velocities(v-1) + ...
-                0.5*(spacing - config.truck.initial_spacing);
+function validatePlatoonTrainer(trainer, config)
+    % VALIDATEPLATOONTRAINER Validate platoon trainer configuration and state
+    %
+    % This function performs comprehensive validation of a PlatoonTrainer
+    % instance, including:
+    % - Network configuration validation
+    % - Training metrics validation
+    % - Dataset validation
+    % - Model state validation
+    %
+    % Parameters:
+    %   trainer - PlatoonTrainer instance to validate
+    %   config - Configuration structure containing training parameters
+    %
+    % Throws:
+    %   - MException if validation fails
+    %
+    % Author: zplotzke
+    % Last Modified: 2025-02-15 03:21:55 UTC
+    % Version: 1.0.2
+    
+    % Get logger instance
+    logger = utils.Logger.getLogger('PlatoonTrainerValidator');
+    logger.info('Starting platoon trainer validation');
+    
+    try
+        % Validate network configuration
+        validateNetworkConfig(trainer.NetworkConfig, config.training, logger);
+        
+        % Validate training metrics if network is trained
+        if trainer.IsNetworkTrained
+            validateTrainingMetrics(trainer.TrainingMetrics, config.training, logger);
         end
-
-        % PID-like control
-        speed_error = target_speed - state.velocities(v);
-        state.accelerations(v) = 0.5 * speed_error;  % P control
-        state.jerks(v) = 0.1 * state.accelerations(v);  % D control
+        
+        % Validate dataset if available
+        if trainer.DatasetSize > 0
+            validateDataset(trainer, config.training, logger);
+        end
+        
+        % Validate model state
+        validateModelState(trainer, logger);
+        
+        logger.info('Platoon trainer validation completed successfully');
+        
+    catch ME
+        logger.error('Validation failed: %s', ME.message);
+        rethrow(ME);
     end
-
-    % Update states
-    state.positions = state.positions + config.simulation.time_step * state.velocities;
-    state.velocities = state.velocities + config.simulation.time_step * state.accelerations;
-    state.accelerations = state.accelerations + config.simulation.time_step * state.jerks;
-
-    trainer.collectSimulationData(state);
 end
 
-fprintf('\nCollected %d samples\n', trainer.DatasetSize);
-
-% Initial validation
-if ~trainer.IsNetworkTrained
-    fprintf('Network not yet trained - OK\n');
-else
-    error('Network should not be trained initially');
+function validateNetworkConfig(networkConfig, trainingConfig, logger)
+    % Validate network configuration matches training config
+    logger.debug('Validating network configuration');
+    
+    assert(networkConfig.lstm_hidden_units == trainingConfig.lstm_hidden_units, ...
+        'LSTM hidden units mismatch: expected %d, got %d', ...
+        trainingConfig.lstm_hidden_units, networkConfig.lstm_hidden_units);
+    
+    assert(networkConfig.max_epochs == trainingConfig.max_epochs, ...
+        'Max epochs mismatch: expected %d, got %d', ...
+        trainingConfig.max_epochs, networkConfig.max_epochs);
+    
+    assert(networkConfig.mini_batch_size == trainingConfig.mini_batch_size, ...
+        'Mini batch size mismatch: expected %d, got %d', ...
+        trainingConfig.mini_batch_size, networkConfig.mini_batch_size);
+    
+    assert(abs(networkConfig.learning_rate - trainingConfig.learning_rate) < 1e-6, ...
+        'Learning rate mismatch: expected %.6f, got %.6f', ...
+        trainingConfig.learning_rate, networkConfig.learning_rate);
+    
+    logger.debug('Network configuration validation completed');
 end
 
-if isstruct(trainer.NetworkConfig) && isstruct(trainer.TrainingMetrics)
-    fprintf('Configuration structures initialized - OK\n');
-else
-    error('Invalid configuration structures');
+function validateTrainingMetrics(metrics, trainingConfig, logger)
+    % Validate training metrics are reasonable
+    logger.debug('Validating training metrics');
+    
+    % Validate RMSE values
+    assert(~isempty(metrics.trainRMSE), 'Training RMSE missing');
+    assert(~isempty(metrics.valRMSE), 'Validation RMSE missing');
+    assert(all(metrics.trainRMSE > 0), 'Invalid training RMSE values');
+    assert(all(metrics.valRMSE > 0), 'Invalid validation RMSE values');
+    
+    % Validate training time
+    assert(metrics.trainTime > 0, 'Invalid training time');
+    
+    % Validate epochs
+    assert(metrics.epochs > 0 && metrics.epochs <= trainingConfig.max_epochs, ...
+        'Invalid number of epochs: %d', metrics.epochs);
+    
+    % Validate final loss
+    assert(metrics.finalLoss > 0 && ~isinf(metrics.finalLoss), ...
+        'Invalid final loss: %.6f', metrics.finalLoss);
+    
+    logger.debug('Training metrics validation completed');
 end
 
-if trainer.DatasetSize >= 100
-    fprintf('Sufficient data collected - OK\n');
-else
-    error('Insufficient data samples (minimum 100 required)');
+function validateDataset(trainer, trainingConfig, logger)
+    % Validate dataset properties
+    logger.debug('Validating dataset');
+    
+    % Check dataset size
+    assert(trainer.DatasetSize >= trainingConfig.mini_batch_size, ...
+        'Dataset size (%d) smaller than mini-batch size (%d)', ...
+        trainer.DatasetSize, trainingConfig.mini_batch_size);
+    
+    % Check data distribution if available
+    if ismethod(trainer, 'getDataDistribution')
+        dist = trainer.getDataDistribution();
+        validateDataDistribution(dist, logger);
+    end
+    
+    logger.debug('Dataset validation completed');
 end
 
-% Train network
-try
-    trainer.trainNetwork();
-    fprintf('\nTraining Results:\n');
-    fprintf('----------------\n');
-    fprintf('Training completed successfully\n');
-
+function validateModelState(trainer, logger)
+    % Validate model state
+    logger.debug('Validating model state');
+    
     if trainer.IsNetworkTrained
-        metrics = trainer.TrainingMetrics;
-
-        fprintf('Training Metrics:\n');
-        fprintf('  - Training RMSE:   %.4f\n', metrics.trainRMSE);
-        fprintf('  - Validation RMSE: %.4f\n', metrics.valRMSE);
-        fprintf('  - Training Time:   %.2f seconds\n', metrics.trainTime);
-        fprintf('  - Total Epochs:    %d\n', metrics.epochs);
-        fprintf('  - Final Loss:      %.4f\n', metrics.finalLoss);
-        fprintf('  - Training Split:  %.1f%%\n', config.training.train_split_ratio * 100);
-        fprintf('  - Random Seed:     %d\n', config.simulation.random_seed);
-
-        % Plot learning curves if available
-        if isfield(metrics, 'learningCurve')
-            figure('Name', 'Training Progress');
-            subplot(2,1,1);
-            plot(metrics.learningCurve.iterations, ...
-                metrics.learningCurve.trainRMSE, 'b-', ...
-                metrics.learningCurve.iterations, ...
-                metrics.learningCurve.valRMSE, 'r-');
-            xlabel('Iteration');
-            ylabel('RMSE');
-            title(sprintf('Learning Curves (Seed: %d)', config.simulation.random_seed));
-            legend('Training', 'Validation', 'Location', 'best');
-            grid on;
-
-            % Add loss ratio plot
-            subplot(2,1,2);
-            ratio = metrics.learningCurve.valRMSE ./ metrics.learningCurve.trainRMSE;
-            plot(metrics.learningCurve.iterations, ratio, 'k-');
-            xlabel('Iteration');
-            ylabel('Validation/Training RMSE Ratio');
-            title('Overfitting Indicator');
-            yline(3, 'r--', 'Overfitting Threshold');
-            grid on;
-        end
-
-        % Validation checks
-        assert(~isnan(metrics.trainRMSE), 'Training RMSE should not be NaN');
-        assert(~isnan(metrics.valRMSE), 'Validation RMSE should not be NaN');
-        assert(metrics.trainTime > 0, 'Training time should be positive');
-        assert(metrics.epochs > 0, 'Number of epochs should be positive');
-
-        % Check for potential issues
-        if metrics.valRMSE > 3 * metrics.trainRMSE
-            warning('Possible overfitting detected: validation RMSE (%.4f) > 3x training RMSE (%.4f)', ...
-                metrics.valRMSE, metrics.trainRMSE);
-            fprintf('\nSuggested remedies for overfitting:\n');
-            fprintf('1. Increase dropout rate (currently %.2f)\n', config.training.dropout_rate);
-            fprintf('2. Decrease network capacity\n');
-            fprintf('3. Collect more training data (currently %d samples)\n', ...
-                trainer.DatasetSize);
-        end
-
-        if metrics.epochs >= config.training.max_epochs
-            warning('Maximum epochs (%d) reached - model might benefit from longer training', ...
-                config.training.max_epochs);
-        end
-
-        fprintf('\nAll validation checks passed successfully\n');
-    else
-        error('Network training did not complete');
+        % Verify model can make predictions
+        assert(ismethod(trainer, 'predictNextState'), ...
+            'Trained model missing prediction method');
+        
+        % Verify model weights exist
+        assert(~isempty(trainer.getNetwork()), 'Model weights missing');
     end
-catch ME
-    fprintf('\nValidation failed: %s\n', ME.message);
-    fprintf('Stack trace:\n');
-    for i = 1:length(ME.stack)
-        fprintf('  File: %s, Line: %d, Function: %s\n', ...
-            ME.stack(i).file, ...
-            ME.stack(i).line, ...
-            ME.stack(i).name);
-    end
-    rethrow(ME);
+    
+    logger.debug('Model state validation completed');
 end
+
+function validateDataDistribution(distribution, logger)
+    % Validate data distribution properties
+    assert(isstruct(distribution), 'Invalid distribution format');
+    assert(isfield(distribution, 'mean') && isfield(distribution, 'std'), ...
+        'Missing distribution statistics');
+    
+    % Log distribution statistics
+    logger.debug('Data distribution - Mean: %.4f, Std: %.4f', ...
+        mean(distribution.mean), mean(distribution.std));
 end
