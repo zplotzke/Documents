@@ -2,8 +2,8 @@ classdef PlatoonTrainer < handle
     % PLATOONTRAINER Training management for truck platoon LSTM network
     %
     % Author: zplotzke
-    % Last Modified: 2025-02-13 02:00:47 UTC
-    % Version: 2.0.6
+    % Last Modified: 2025-02-15 05:11:34 UTC
+    % Version: 2.0.8
 
     properties (SetAccess = private, GetAccess = public)
         IsNetworkTrained  % Boolean indicating if network is trained
@@ -98,17 +98,43 @@ classdef PlatoonTrainer < handle
             end
         end
 
+        function metrics = getTrainingMetrics(obj)
+            % GETTRAININGMETRICS Get current training metrics
+            metrics = obj.TrainingMetrics;
+
+            % If metrics are empty, return default structure
+            if isempty(metrics)
+                metrics = struct(...
+                    'trainRMSE', [], ...
+                    'valRMSE', [], ...
+                    'trainTime', [], ...
+                    'epochs', [], ...
+                    'finalLoss', [], ...
+                    'learningCurve', struct(...
+                    'trainRMSE', [], ...
+                    'valRMSE', [], ...
+                    'iterations', [] ...
+                    ) ...
+                    );
+            end
+        end
+
+        function stats = getTrainingStats(obj)
+            % GETTRAININGSTATS Get detailed training statistics
+            stats = struct(...
+                'isNetworkTrained', obj.IsNetworkTrained, ...
+                'datasetSize', obj.DatasetSize, ...
+                'networkConfig', obj.NetworkConfig, ...
+                'trainingMetrics', obj.getTrainingMetrics() ...
+                );
+        end
+
         function net = getNetwork(obj)
             % GETNETWORK Get trained network
             if ~obj.IsNetworkTrained
                 obj.logger.warning('Attempting to get untrained network');
             end
             net = obj.network;
-        end
-
-        function metrics = getTrainingStats(obj)
-            % GETTRAININGMETRICS Get training performance metrics
-            metrics = obj.TrainingMetrics;
         end
     end
 
@@ -121,6 +147,14 @@ classdef PlatoonTrainer < handle
                 'velocities', [], ...
                 'accelerations', [], ...
                 'jerks', [] ...
+                );
+
+            obj.validationData = [];
+            obj.preprocessStats = struct(...
+                'dataMin', [], ...
+                'dataMax', [], ...
+                'meanVals', [], ...
+                'stdVals', [] ...
                 );
         end
 
@@ -145,26 +179,11 @@ classdef PlatoonTrainer < handle
                 error('PlatoonTrainer:EmptyData', 'No training data available');
             end
 
-            % Log data shape before preprocessing
-            obj.logger.debug('Raw data shape: positions=%s, velocities=%s', ...
-                mat2str(size(obj.trainingData.positions)), ...
-                mat2str(size(obj.trainingData.velocities)));
-
             % Combine features
             rawFeatures = [obj.trainingData.positions;
                 obj.trainingData.velocities;
                 obj.trainingData.accelerations;
                 obj.trainingData.jerks];
-
-            obj.logger.debug('Combined features shape: %s', mat2str(size(rawFeatures)));
-
-            % Ensure we have enough data for sequence
-            if size(rawFeatures, 2) < obj.config.training.sequence_length + 1
-                error('PlatoonTrainer:InsufficientData', ...
-                    'Need at least %d samples for training (got %d)', ...
-                    obj.config.training.sequence_length + 1, ...
-                    size(rawFeatures, 2));
-            end
 
             % Normalize data
             X = obj.normalizeData(rawFeatures);
@@ -173,62 +192,41 @@ classdef PlatoonTrainer < handle
             Y = X(:,2:end);
             X = X(:,1:end-1);
 
-            obj.logger.debug('Data shapes after splitting: X=%s, Y=%s', ...
-                mat2str(size(X)), mat2str(size(Y)));
-
             % Reshape for LSTM [features x sequence_length x samples]
             X = obj.reshapeForLSTM(X);
             Y = obj.reshapeForLSTM(Y);
-
-            obj.logger.debug('Final shapes: X=%s, Y=%s', ...
-                mat2str(size(X)), mat2str(size(Y)));
         end
 
         function data = normalizeData(obj, data)
-            % Normalize data to [-1, 1] range
-            obj.logger.debug('Normalizing data of shape: %s', mat2str(size(data)));
-
-            dataMin = min(data, [], 2);
-            dataMax = max(data, [], 2);
-            range = dataMax - dataMin;
+            % Normalize data using z-score normalization
+            obj.preprocessStats.meanVals = mean(data, 2);
+            obj.preprocessStats.stdVals = std(data, 0, 2);
 
             % Handle constant features
-            constFeatures = range < eps;
-            if any(constFeatures)
-                obj.logger.warning('Found %d constant features', sum(constFeatures));
-                range(constFeatures) = 1;
-            end
-
-            % Store normalization parameters
-            obj.preprocessStats.dataMin = dataMin;
-            obj.preprocessStats.dataMax = dataMax;
+            constFeatures = obj.preprocessStats.stdVals < eps;
+            obj.preprocessStats.stdVals(constFeatures) = 1;
 
             % Normalize
-            data = 2 * (data - dataMin) ./ range - 1;
+            data = (data - obj.preprocessStats.meanVals) ./ obj.preprocessStats.stdVals;
         end
 
         function data = reshapeForLSTM(obj, data)
-            % Reshape data for LSTM network [features x sequence_length x samples]
+            % Reshape data for LSTM [features x sequence_length x samples]
             [numFeatures, numTimesteps] = size(data);
-
-            % Calculate number of complete sequences
             numSequences = floor(numTimesteps / obj.config.training.sequence_length);
 
             if numSequences == 0
                 error('PlatoonTrainer:InsufficientData', ...
-                    'Not enough timesteps (%d) for sequence length %d', ...
-                    numTimesteps, obj.config.training.sequence_length);
+                    'Not enough timesteps for sequence length');
             end
-
-            obj.logger.debug('Reshaping data: features=%d, timesteps=%d, sequences=%d, seq_len=%d', ...
-                numFeatures, numTimesteps, numSequences, obj.config.training.sequence_length);
 
             % Keep only complete sequences
             useTimesteps = numSequences * obj.config.training.sequence_length;
             data = data(:, 1:useTimesteps);
 
-            % Reshape to [features x sequence_length x samples]
-            data = reshape(data, numFeatures, obj.config.training.sequence_length, numSequences);
+            % Reshape
+            data = reshape(data, numFeatures, ...
+                obj.config.training.sequence_length, numSequences);
         end
 
         function [XTrain, YTrain, XVal, YVal] = splitTrainingData(obj, X, Y)
@@ -250,7 +248,10 @@ classdef PlatoonTrainer < handle
         end
 
         function [net, metrics] = trainLSTM(obj, XTrain, YTrain, XVal, YVal)
-            % Train LSTM network with improved regularization
+            % Train LSTM network
+            obj.trainingStartTime = tic;
+
+            % Set up training parameters
             options = trainingOptions('adam', ...
                 'MaxEpochs', obj.config.training.max_epochs, ...
                 'MiniBatchSize', obj.config.training.mini_batch_size, ...
@@ -259,28 +260,24 @@ classdef PlatoonTrainer < handle
                 'ValidationData', {XVal, YVal}, ...
                 'ValidationFrequency', 10, ...
                 'ValidationPatience', 10, ...
-                'L2Regularization', 0.001, ...
-                'LearnRateSchedule', 'piecewise', ...
-                'LearnRateDropPeriod', 20, ...
-                'LearnRateDropFactor', 0.5, ...
-                'Verbose', false, ...
-                'Plots', 'training-progress');
+                'Verbose', false);
 
-            obj.trainingStartTime = tic;
-            [net, info] = trainNetwork(XTrain, YTrain, obj.network, options);
+            % Train network
+            [net, info] = trainNetwork(XTrain, YTrain, obj.network.getArchitecture(), options);
+
+            % Calculate metrics
             trainTime = toc(obj.trainingStartTime);
+            metrics = obj.calculateTrainingMetrics(net, info, XTrain, YTrain, XVal, YVal, trainTime);
+        end
 
-            % Calculate final RMSE values
+        function metrics = calculateTrainingMetrics(obj, net, info, XTrain, YTrain, XVal, YVal, trainTime)
+            % Calculate detailed training metrics
             YPredTrain = predict(net, XTrain);
-            trainRMSE = sqrt(mean((YPredTrain - YTrain).^2, 'all'));
-
             YPredVal = predict(net, XVal);
-            valRMSE = sqrt(mean((YPredVal - YVal).^2, 'all'));
 
-            % Store learning curves
             metrics = struct(...
-                'trainRMSE', trainRMSE, ...
-                'valRMSE', valRMSE, ...
+                'trainRMSE', sqrt(mean((YPredTrain - YTrain).^2, 'all')), ...
+                'valRMSE', sqrt(mean((YPredVal - YVal).^2, 'all')), ...
                 'trainTime', trainTime, ...
                 'epochs', numel(info.TrainingRMSE), ...
                 'finalLoss', info.FinalValidationLoss, ...
@@ -288,24 +285,8 @@ classdef PlatoonTrainer < handle
                 'trainRMSE', info.TrainingRMSE, ...
                 'valRMSE', info.ValidationRMSE, ...
                 'iterations', 1:numel(info.TrainingRMSE) ...
-                ));
-
-            obj.logger.info('Training completed: trainRMSE=%.4f, valRMSE=%.4f, epochs=%d', ...
-                metrics.trainRMSE, metrics.valRMSE, metrics.epochs);
-
-            % Log overfitting warning if necessary
-            if metrics.valRMSE > 3 * metrics.trainRMSE
-                obj.logger.warning('Possible overfitting detected: validation RMSE (%.4f) > 3x training RMSE (%.4f)', ...
-                    metrics.valRMSE, metrics.trainRMSE);
-            end
-        end
-
-        function validateNetwork(obj, XVal, YVal)
-            % Validate network performance
-            YPred = predict(obj.network, XVal);
-            rmse = sqrt(mean((YPred - YVal).^2, 'all'));
-            obj.logger.info('Validation RMSE: %.4f', rmse);
-            obj.TrainingMetrics.validationRMSE = rmse;
+                ) ...
+                );
         end
 
         function validateState(~, state)
@@ -318,6 +299,20 @@ classdef PlatoonTrainer < handle
                     error('PlatoonTrainer:InvalidState', ...
                         'Missing required field: %s', required_fields{i});
                 end
+            end
+        end
+
+        function validateNetwork(obj, XVal, YVal)
+            % Validate network performance
+            YPred = predict(obj.network, XVal);
+            rmse = sqrt(mean((YPred - YVal).^2, 'all'));
+
+            obj.logger.info('Validation RMSE: %.4f', rmse);
+            obj.TrainingMetrics.validationRMSE = rmse;
+
+            % Check for overfitting
+            if rmse > 3 * obj.TrainingMetrics.trainRMSE
+                obj.logger.warning('Possible overfitting detected');
             end
         end
     end

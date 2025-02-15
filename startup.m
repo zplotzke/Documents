@@ -4,36 +4,38 @@
 % package directories to the MATLAB path.
 %
 % Author: zplotzke
-% Last Modified: 2025-02-11 15:05:39 UTC
-% Version: 1.0.0
+% Last Modified: 2025-02-15 05:19:52 UTC
+% Version: 1.0.2
 
 try
     % Get the directory containing this startup file
     rootDir = fileparts(mfilename('fullpath'));
 
-    % Add package directories to path
+    % Only add the root directory to the path
+    % MATLAB will automatically handle the package directories
     addpath(rootDir);
-    addpath(genpath(fullfile(rootDir, '+config')));
-    addpath(genpath(fullfile(rootDir, '+utils')));
-    addpath(genpath(fullfile(rootDir, '+core')));
-    addpath(genpath(fullfile(rootDir, '+viz')));
-    addpath(genpath(fullfile(rootDir, '+ml')));
-    addpath(genpath(fullfile(rootDir, 'tests')));
+    addpath(fullfile(rootDir, 'tests'));
 
     % Create required directories if they don't exist
-    requiredDirs = {'data', 'logs', 'results', 'models'};
+    requiredDirs = {'data', 'logs', 'results', 'models', ...
+        '+config', '+core', '+utils', '+ml', 'tests'};
+
     for i = 1:length(requiredDirs)
         dirPath = fullfile(rootDir, requiredDirs{i});
         if ~exist(dirPath, 'dir')
-            mkdir(dirPath);
-            fprintf('Created directory: %s\n', requiredDirs{i});
+            [success, msg] = mkdir(dirPath);
+            if ~success
+                warning('Failed to create directory %s: %s', requiredDirs{i}, msg);
+            else
+                fprintf('Created directory: %s\n', requiredDirs{i});
+            end
         end
     end
 
     % Display startup message
     fprintf('\nTruck Platoon Simulation Environment\n');
     fprintf('Initialization completed successfully\n');
-    fprintf('Timestamp: %s\n', '2025-02-11 15:05:39 UTC');
+    fprintf('Timestamp: %s\n', datestr(now, 'yyyy-mm-dd HH:MM:SS'));
     fprintf('Author: %s\n', 'zplotzke');
     fprintf('Environment ready for simulation\n\n');
 
