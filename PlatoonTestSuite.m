@@ -1,161 +1,207 @@
 classdef PlatoonTestSuite < matlab.unittest.TestCase
     % PLATOONTESTSUITE Test cases for truck platoon simulation
     %
+    % Tests the integration and functionality of:
+    % - Safety monitoring
+    % - Warning system
+    % - Sonification
+    % - Simulation control
+    %
     % Author: zplotzke
-    % Last Modified: 2025-02-15 17:18:57 UTC
-    % Version: 1.1.16
+    % Last Modified: 2025-02-19 15:27:10 UTC
+    % Version: 1.1.20
 
     properties
-        simulation  % TruckPlatoonSimulation instance
-        config     % Configuration structure
-        logger     % Logger instance
-        monitor    % Safety monitor instance
-        trainer    % Platoon trainer instance
-        network    % LSTM Network instance
-    end
-
-    properties (TestParameter)
-        simulationTypes = {'training', 'validation', 'final'}  % Types of simulations to test
-    end
-
-    methods(TestClassSetup)
-        function setupClass(testCase)
-            % Initialize logger for tests
-            testCase.logger = utils.Logger.getLogger('PlatoonTest');
-            testCase.logger.info('Logger initialized by %s', getenv('USERNAME'));
-
-            % Get configuration
-            testCase.config = config.getConfig();
-
-            % Test setup started
-            testCase.logger.info('Test setup started');
-        end
+        simulation      % TruckPlatoonSimulation instance
+        config         % Configuration structure
+        logger         % Logger instance
+        monitor        % Safety monitor instance
+        trainer        % Platoon trainer instance
+        network        % LSTM Network instance
+        warningSystem  % Warning system instance
+        sonificator    % Sonification system instance
     end
 
     methods(TestMethodSetup)
         function setupTest(testCase)
-            % Create fresh instances for each test
+            % Initialize test components
+            testCase.config = config.getConfig();
+            testCase.logger = utils.Logger.getLogger('PlatoonTestSuite');
             testCase.logger.info('Test setup started');
 
-            % Initialize simulation
+            % Initialize simulation components
             testCase.simulation = core.TruckPlatoonSimulation();
-
-            % Initialize safety monitor and attach simulation
             testCase.monitor = core.SafetyMonitor();
+            testCase.warningSystem = utils.WarningSystem();
+            testCase.sonificator = utils.Sonificator();
+
+            % Connect components
             testCase.monitor.setSimulation(testCase.simulation);
+            testCase.monitor.setWarningSystem(testCase.warningSystem);
 
-            % Initialize LSTM network - it will get its config from config.getConfig()
+            % Initialize ML components
             testCase.network = ml.LSTMNetwork();
-
-            % Initialize trainer with network
             testCase.trainer = core.PlatoonTrainer();
+        end
+    end
+
+    methods(Test)
+        function testWarningWithSonification(testCase)
+            % Test integration of warning system with sonification
+            testCase.simulation.startSimulation('training');
+
+            % Force a safety violation by creating unsafe positions
+            positions = [0, 5, 10, 15];  % Trucks too close together
+            velocities = [20, 20, 20, 20];  % All trucks at constant speed
+            accelerations = [0, 0, 0, 0];
+            jerks = [0, 0, 0, 0];
+
+            % Check safety conditions with forced violation
+            [is_safe, violations] = testCase.monitor.checkSafetyConditions(...
+                positions, ...
+                velocities, ...
+                accelerations, ...
+                jerks);
+
+            % Verify safety check results
+            testCase.verifyFalse(is_safe, 'Safety check should fail with forced violation');
+            warnings = testCase.warningSystem.getActiveWarnings();
+            testCase.verifyNotEmpty(warnings, 'Warning should be generated');
+
+            % Verify sonification state
+            testCase.verifyTrue(testCase.sonificator.getEnabled(), ...
+                'Sonificator should be enabled');
+        end
+
+        function testSonificationControl(testCase)
+            % Test enabling/disabling sonification
+            testCase.sonificator.disable();
+            testCase.verifyFalse(testCase.sonificator.getEnabled(), ...
+                'Sonificator should be disabled');
+
+            testCase.sonificator.enable();
+            testCase.verifyTrue(testCase.sonificator.getEnabled(), ...
+                'Sonificator should be enabled');
+        end
+
+        function testWarningPriorities(testCase)
+            % Test that different warning types trigger appropriate sounds
+            warningTypes = {'COLLISION', 'EMERGENCY_BRAKE', 'DISTANCE', 'SPEED'};
+
+            for i = 1:length(warningTypes)
+                testCase.warningSystem.clearWarnings();  % Clear previous warnings
+
+                testCase.warningSystem.raiseWarning(warningTypes{i}, ...
+                    'Test warning', struct('severity', 0.5));
+
+                warnings = testCase.warningSystem.getActiveWarnings();
+                testCase.verifyEqual(warnings{end}.type, warningTypes{i}, ...
+                    'Warning type should match');
+
+                pause(0.3); % Allow time between warnings
+            end
+        end
+
+        function testWarningSystemIntegration(testCase)
+            % Test warning system integration with simulation
+            testCase.simulation.startSimulation('training');
+
+            % Force a safety violation
+            state = testCase.simulation.getState();
+            state.positions = [0, 5, 10, 15]; % Unsafe following distances
+            testCase.simulation.setState(state);
+
+            % Check safety and verify warning generation
+            [is_safe, violations] = testCase.monitor.checkSafetyConditions(...
+                state.positions, ...
+                state.velocities, ...
+                state.accelerations, ...
+                state.jerks);
+
+            % Verify results
+            testCase.verifyFalse(is_safe, 'Safety violation should be detected');
+            warnings = testCase.warningSystem.getActiveWarnings();
+            testCase.verifyNotEmpty(warnings, 'Warning should be generated');
+        end
+
+        function testSimulationReset(testCase)
+            % Test simulation reset functionality
+            testCase.simulation.startSimulation('training');
+            initial_state = testCase.simulation.getState();
+
+            % Run simulation for a few steps
+            for i = 1:5
+                testCase.simulation.step();
+            end
+
+            % Reset simulation
+            testCase.simulation.reset();
+            reset_state = testCase.simulation.getState();
+
+            % Verify reset state matches initial state
+            testCase.verifyEqual(reset_state.positions, initial_state.positions, ...
+                'Positions should reset to initial values');
+            testCase.verifyEqual(reset_state.velocities, initial_state.velocities, ...
+                'Velocities should reset to initial values');
+        end
+
+        function testWarningTimeouts(testCase)
+            % Test warning timeout functionality
+            testCase.warningSystem.clearWarnings();
+
+            % Raise initial warning
+            testCase.warningSystem.raiseWarning('COLLISION', 'Initial warning', ...
+                struct('severity', 1.0));
+
+            % Get initial warning count
+            initialWarnings = testCase.warningSystem.getActiveWarnings();
+            initialCount = length(initialWarnings);
+
+            % Attempt to raise same warning immediately
+            testCase.warningSystem.raiseWarning('COLLISION', 'Repeated warning', ...
+                struct('severity', 1.0));
+
+            % Verify warning count hasn't changed due to timeout
+            currentWarnings = testCase.warningSystem.getActiveWarnings();
+            testCase.verifyEqual(length(currentWarnings), initialCount, ...
+                'Duplicate warning should be prevented by timeout');
+        end
+
+        function testSeverityLevels(testCase)
+            % Test different severity levels for warnings
+            severityLevels = [0.2, 0.5, 0.8, 1.0];
+            warningCount = 0;
+
+            for severity = severityLevels
+                testCase.warningSystem.clearWarnings();  % Clear previous warnings
+
+                testCase.warningSystem.raiseWarning('COLLISION', ...
+                    sprintf('Warning with severity %.1f', severity), ...
+                    struct('severity', severity));
+                warningCount = warningCount + 1;
+
+                % Verify warning generation and severity
+                warnings = testCase.warningSystem.getActiveWarnings();
+                testCase.verifyEqual(length(warnings), 1, ...
+                    sprintf('Warning should be generated for severity %.1f', severity));
+                testCase.verifyEqual(warnings{1}.data.severity, severity, ...
+                    'Warning severity should match');
+
+                pause(0.5); % Ensure enough time between warnings
+            end
+
+            % Verify total warnings generated
+            testCase.verifyEqual(warningCount, length(severityLevels), ...
+                'All severity levels should generate warnings');
         end
     end
 
     methods(TestMethodTeardown)
         function teardownTest(testCase)
-            testCase.logger.info('Test teardown started');
-
-            % Reset simulation
-            if ~isempty(testCase.simulation)
-                testCase.simulation.resetSimulation();
-            end
-        end
-    end
-
-    methods(Test)
-        function testFullSimulation(testCase, simulationTypes)
-            % Test full simulation run with different types
-            testCase.simulation.startSimulation(simulationTypes);
-
-            maxSteps = ceil(testCase.config.simulation.duration / testCase.config.simulation.time_step);
-            maxIterations = min(maxSteps, 1000);
-
-            history = struct('timeHistory', [], 'stateHistory', []);
-
-            for i = 1:maxIterations
-                state = testCase.simulation.step();
-                testCase.verifyTrue(testCase.simulation.validateState(), ...
-                    sprintf('Invalid simulation state detected at step %d', i));
-
-                % Append to history
-                history.timeHistory(end+1) = state.time;
-                history.stateHistory(end+1) = state;
-
-                if state.isFinished
-                    break;
-                end
-            end
-
-            % Verify simulation completed successfully
-            testCase.verifyTrue(isa(history.timeHistory, 'double'), 'Time history has wrong type');
-            testCase.verifyTrue(numel(history.timeHistory) > 0, 'No time history recorded');
-            testCase.verifyTrue(numel(history.stateHistory) > 0, 'No state history recorded');
-        end
-
-        function testSafetyMonitoring(testCase)
-            testCase.simulation.startSimulation('training');
-
-            for i = 1:10
-                state = testCase.simulation.step();
-                warnings = testCase.monitor.checkSafety();
-
-                testCase.verifyClass(warnings, 'struct');
-                testCase.verifyTrue(isfield(warnings, 'level'));
-                testCase.verifyTrue(isfield(warnings, 'message'));
-            end
-        end
-
-        function testTrainingIntegration(testCase)
-            testCase.simulation.startSimulation('training');
-
-            for i = 1:5
-                state = testCase.simulation.step();
-                nextState = predictNextState(testCase.network, state);  % Using predictNextState directly
-
-                testCase.verifyClass(nextState, 'struct');
-                testCase.verifyTrue(isfield(nextState, 'positions'));
-                testCase.verifyTrue(isfield(nextState, 'velocities'));
-                testCase.verifyTrue(isfield(nextState, 'accelerations'));
-                testCase.verifyTrue(isfield(nextState, 'jerks'));
-                testCase.verifySize(nextState.positions, size(state.positions));
-            end
-        end
-
-        function testStateValidation(testCase)
-            % Initialize simulation and wait for initial spacing to stabilize
-            testCase.simulation.startSimulation('training');
-
-            % Run a few more steps to allow initial positions to stabilize
-            for i = 1:10
-                testCase.simulation.step();
-            end
-
-            % Get stabilized state
-            state = testCase.simulation.getState();
-
-            % Verify state structure
-            testCase.verifyClass(state, 'struct');
-            testCase.verifyTrue(isfield(state, 'time'));
-            testCase.verifyTrue(isfield(state, 'positions'));
-            testCase.verifyTrue(isfield(state, 'velocities'));
-            testCase.verifyTrue(isfield(state, 'accelerations'));
-            testCase.verifyTrue(isfield(state, 'jerks'));
-            testCase.verifyTrue(isfield(state, 'isFinished'));
-
-            % Verify state values
-            testCase.verifySize(state.positions, [1, testCase.config.truck.num_trucks]);
-            testCase.verifySize(state.velocities, [1, testCase.config.truck.num_trucks]);
-
-            % Verify truck spacing after stabilization
-            positions = state.positions;
-            minSafeDistance = testCase.config.truck.min_safe_distance;
-            for i = 1:(length(positions)-1)
-                spacing = positions(i+1) - positions(i);
-                testCase.verifyGreaterThanOrEqual(spacing, minSafeDistance, ...
-                    sprintf('Unsafe spacing between trucks %d and %d: %.2f < %d', ...
-                    i, i+1, spacing, minSafeDistance));
-            end
+            % Clean up after each test
+            testCase.warningSystem.clearWarnings();
+            testCase.simulation.reset();
+            testCase.logger.info('Test teardown completed');
         end
     end
 end

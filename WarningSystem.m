@@ -8,8 +8,8 @@ classdef WarningSystem < handle
     % - Emergency brake warnings
     %
     % Author: zplotzke
-    % Last Modified: 2025-02-13 02:07:26 UTC
-    % Version: 1.0.5
+    % Last Modified: 2025-02-19 15:13:48 UTC
+    % Version: 1.1.1
 
     properties (Access = private)
         config              % Configuration settings
@@ -18,6 +18,7 @@ classdef WarningSystem < handle
         lastWarningTimes   % Map of last warning times by type
         warningCounts      % Map of warning counts by type
         activeWarnings     % Currently active warnings
+        sonificator        % Sonification system
     end
 
     properties (Constant)
@@ -42,11 +43,14 @@ classdef WarningSystem < handle
             obj.initializeWarningTypes();
             obj.resetWarningCounters();
 
-            obj.logger.info('Warning system initialized');
+            % Initialize sonification system with proper package reference
+            obj.sonificator = utils.Sonificator();
+
+            obj.logger.info('Warning system initialized with sonification');
         end
 
         function raiseWarning(obj, warningType, message, data)
-            % RAISEWARNING Raise a new warning
+            % RAISEWARNING Raise a new warning with sonification
             if ~obj.WARNING_TYPES.isKey(warningType)
                 obj.logger.error('Invalid warning type: %s', warningType);
                 return;
@@ -73,7 +77,13 @@ classdef WarningSystem < handle
                     );
                 obj.activeWarnings{end+1} = warning;
 
-                % Trigger appropriate response based on warning type
+                % Calculate warning severity (0-1 scale)
+                severity = obj.calculateWarningSeverity(warning);
+
+                % Trigger sonification
+                obj.sonificator.sonifyWarning(warningType, severity);
+
+                % Handle warning
                 obj.handleWarning(warning);
             end
         end
@@ -96,6 +106,16 @@ classdef WarningSystem < handle
             obj.activeWarnings = {};
             obj.resetWarningCounters();
             obj.logger.info('All warnings cleared');
+        end
+
+        function enableSonification(obj)
+            % ENABLESONIFICATION Enable warning sounds
+            obj.sonificator.enable();
+        end
+
+        function disableSonification(obj)
+            % DISABLESONIFICATION Disable warning sounds
+            obj.sonificator.disable();
         end
     end
 
@@ -136,8 +156,6 @@ classdef WarningSystem < handle
         function resetWarningCounters(obj)
             % Reset warning counters and timestamps
             warningTypes = obj.WARNING_TYPES.keys;
-
-            % Initialize counters map
             obj.warningCounts = containers.Map();
             obj.lastWarningTimes = containers.Map();
 
@@ -157,6 +175,42 @@ classdef WarningSystem < handle
             timeout = (currentTime - lastWarning) * 86400 >= minTimeout;
         end
 
+        function severity = calculateWarningSeverity(obj, warning)
+            % Calculate warning severity on a 0-1 scale
+            severity = 0.5; % Default medium severity
+
+            switch warning.type
+                case 'COLLISION'
+                    if isfield(warning.data, 'distance')
+                        threshold = obj.config.safety.collision_warning_distance;
+                        severity = 1 - (warning.data.distance / threshold);
+                    else
+                        severity = 1.0;
+                    end
+
+                case 'EMERGENCY_BRAKE'
+                    if isfield(warning.data, 'deceleration')
+                        maxDecel = abs(obj.config.truck.max_deceleration);
+                        severity = abs(warning.data.deceleration) / maxDecel;
+                    end
+
+                case 'DISTANCE'
+                    if isfield(warning.data, 'actual_distance') && ...
+                            isfield(warning.data, 'required_distance')
+                        severity = 1 - (warning.data.actual_distance / ...
+                            warning.data.required_distance);
+                    end
+
+                case 'SPEED'
+                    if isfield(warning.data, 'speed')
+                        maxSpeed = obj.config.truck.max_velocity;
+                        severity = warning.data.speed / maxSpeed - 1;
+                    end
+            end
+
+            severity = min(max(severity, 0), 1);
+        end
+
         function handleWarning(obj, warning)
             % Handle specific warning types
             switch warning.type
@@ -174,25 +228,21 @@ classdef WarningSystem < handle
         function handleCollisionWarning(obj, warning)
             % Handle collision warnings (highest priority)
             obj.logger.error('COLLISION WARNING: %s', warning.message);
-            % Additional collision-specific handling could be added here
         end
 
         function handleEmergencyBrakeWarning(obj, warning)
             % Handle emergency brake warnings
             obj.logger.warning('EMERGENCY BRAKE: %s', warning.message);
-            % Additional emergency brake-specific handling could be added here
         end
 
         function handleDistanceWarning(obj, warning)
             % Handle distance violation warnings
             obj.logger.warning('DISTANCE VIOLATION: %s', warning.message);
-            % Additional distance-specific handling could be added here
         end
 
         function handleSpeedWarning(obj, warning)
             % Handle speed violation warnings
             obj.logger.warning('SPEED VIOLATION: %s', warning.message);
-            % Additional speed-specific handling could be added here
         end
     end
 end

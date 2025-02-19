@@ -1,138 +1,186 @@
 classdef SafetyMonitor < handle
-    % SAFETYMONITOR Monitor safety conditions for truck platoon
+    % SAFETYMONITOR Safety monitoring system for truck platoon
+    %
+    % This class monitors safety conditions for the truck platoon including:
+    % - Following distances
+    % - Speed limits
+    % - Acceleration limits
+    % - Jerk limits
     %
     % Author: zplotzke
-    % Last Modified: 2025-02-15 17:11:27 UTC
-    % Version: 1.0.5
+    % Last Modified: 2025-02-19 15:25:04 UTC
+    % Version: 1.1.2
 
     properties (Access = private)
-        simulation   % Reference to TruckPlatoonSimulation instance
-        config      % Configuration structure
-        logger      % Logger instance
-        lastWarningTime % Time of last warning (in seconds)
-        WARNING_INTERVAL = 1.0 % Fixed warning interval in seconds
+        config          % Configuration settings
+        logger          % Logger instance
+        simulation      % Reference to simulation
+        lastCheckTime   % Time of last safety check
+        warningSystem   % Reference to warning system
     end
 
     methods
         function obj = SafetyMonitor()
-            % Constructor
-            % Initialize monitor with default configuration
-
-            % Load configuration
             obj.config = config.getConfig();
-
-            % Initialize logger
             obj.logger = utils.Logger.getLogger('SafetyMonitor');
-            obj.lastWarningTime = 0;
-
+            obj.lastCheckTime = 0;
+            obj.warningSystem = utils.WarningSystem();
             obj.logger.info('Safety monitor initialized');
         end
 
-        function setSimulation(obj, simulation)
-            % Set simulation instance to monitor
-            obj.simulation = simulation;
+        function setSimulation(obj, sim)
+            obj.simulation = sim;
         end
 
-        function warnings = checkSafety(obj)
-            % Check all safety conditions and return warnings
-            warnings = struct('level', [], 'message', []);
+        function setWarningSystem(obj, warningSystem)
+            obj.warningSystem = warningSystem;
+        end
 
-            % Check if simulation is attached
-            if isempty(obj.simulation)
-                warnings.level = 'ERROR';
-                warnings.message = 'No simulation attached to monitor';
-                obj.logWarning(warnings);
-                return;
+        function [is_safe, violations] = checkSafetyConditions(obj, positions, velocities, accelerations, jerks)
+            % CHECKSAFETYCONDITIONS Check all safety conditions for the platoon
+            %
+            % Parameters:
+            %   positions - Array of truck positions (meters)
+            %   velocities - Array of truck velocities (m/s)
+            %   accelerations - Array of truck accelerations (m/s^2)
+            %   jerks - Array of truck jerks (m/s^3)
+            %
+            % Returns:
+            %   is_safe - Boolean indicating if all safety conditions are met
+            %   violations - Structure containing details of any violations
+
+            violations = struct();
+            is_safe = true;
+
+            % Check minimum following distance
+            min_distance = obj.checkFollowingDistance(positions);
+            if ~min_distance.safe
+                is_safe = false;
+                violations.distance = min_distance;
+                obj.warningSystem.raiseWarning('DISTANCE', min_distance.message, ...
+                    struct('actual_distance', min_distance.distance, ...
+                    'required_distance', min_distance.required));
             end
 
-            % Get current state
-            state = obj.simulation.getState();
-
-            % Check spacing between vehicles
-            positions = state.positions;
-            minSafeDistance = obj.config.truck.min_safe_distance;
-
-            for i = 1:(length(positions)-1)
-                spacing = positions(i+1) - positions(i);
-                if spacing < minSafeDistance
-                    warnings.level = 'WARNING';
-                    warnings.message = sprintf('Unsafe spacing between trucks %d and %d: %.2f m (min: %.2f m)', ...
-                        i, i+1, spacing, minSafeDistance);
-                    obj.logWarning(warnings);
-                    return;
-                end
+            % Check speed limits
+            speed_check = obj.checkSpeedLimits(velocities);
+            if ~speed_check.safe
+                is_safe = false;
+                violations.speed = speed_check;
+                obj.warningSystem.raiseWarning('SPEED', speed_check.message, ...
+                    struct('speed', speed_check.speed, ...
+                    'max_speed', speed_check.limit));
             end
 
-            % Check velocity bounds
-            velocities = state.velocities;
-            maxVelocity = obj.config.truck.max_velocity;
-
-            for i = 1:length(velocities)
-                if abs(velocities(i)) > maxVelocity
-                    warnings.level = 'WARNING';
-                    warnings.message = sprintf('Truck %d exceeds velocity limit: %.2f m/s (max: %.2f m/s)', ...
-                        i, velocities(i), maxVelocity);
-                    obj.logWarning(warnings);
-                    return;
-                end
+            % Check acceleration limits
+            accel_check = obj.checkAccelerationLimits(accelerations);
+            if ~accel_check.safe
+                is_safe = false;
+                violations.acceleration = accel_check;
+                obj.warningSystem.raiseWarning('EMERGENCY_BRAKE', accel_check.message, ...
+                    struct('acceleration', accel_check.acceleration, ...
+                    'limit', accel_check.limit));
             end
 
-            % Check acceleration bounds
-            accelerations = state.accelerations;
-            maxAccel = obj.config.truck.max_acceleration;
-            maxDecel = obj.config.truck.max_deceleration;
-
-            for i = 1:length(accelerations)
-                if accelerations(i) > maxAccel
-                    warnings.level = 'WARNING';
-                    warnings.message = sprintf('Truck %d exceeds acceleration limit: %.2f m/s² (max: %.2f m/s²)', ...
-                        i, accelerations(i), maxAccel);
-                    obj.logWarning(warnings);
-                    return;
-                elseif accelerations(i) < maxDecel
-                    warnings.level = 'WARNING';
-                    warnings.message = sprintf('Truck %d exceeds deceleration limit: %.2f m/s² (min: %.2f m/s²)', ...
-                        i, accelerations(i), maxDecel);
-                    obj.logWarning(warnings);
-                    return;
-                end
+            % Check jerk limits
+            jerk_check = obj.checkJerkLimits(jerks);
+            if ~jerk_check.safe
+                is_safe = false;
+                violations.jerk = jerk_check;
+                obj.warningSystem.raiseWarning('COLLISION', jerk_check.message, ...
+                    struct('jerk', jerk_check.jerk, ...
+                    'limit', jerk_check.limit));
             end
 
-            % Check emergency deceleration threshold
-            emergencyThreshold = obj.config.truck.max_deceleration * 1.5;  % Emergency is 150% of max decel
-            if any(accelerations < emergencyThreshold)
-                warnings.level = 'EMERGENCY';
-                warnings.message = sprintf('Emergency deceleration detected: %.2f m/s² (threshold: %.2f m/s²)', ...
-                    min(accelerations), emergencyThreshold);
-                obj.logWarning(warnings);
-                return;
+            % Log violations if any
+            if ~is_safe
+                obj.logViolations(violations);
             end
-
-            % If we get here, everything is safe
-            warnings.level = 'INFO';
-            warnings.message = 'All safety conditions met';
         end
     end
 
     methods (Access = private)
-        function logWarning(obj, warning)
-            % Log warning if enough time has passed since last warning
-            currentTime = obj.simulation.getState().time;
+        function result = checkFollowingDistance(obj, positions)
+            result = struct('safe', true, ...
+                'message', '', ...
+                'distance', 0, ...
+                'required', 0);
 
-            % Check if minimum time between warnings has passed
-            if (currentTime - obj.lastWarningTime) >= obj.WARNING_INTERVAL
-                switch warning.level
-                    case 'ERROR'
-                        obj.logger.error(warning.message);
-                    case 'WARNING'
-                        obj.logger.warning(warning.message);
-                    case 'EMERGENCY'
-                        obj.logger.error('EMERGENCY: %s', warning.message);
-                    otherwise
-                        obj.logger.info(warning.message);
+            min_safe_distance = obj.config.safety.collision_warning_distance;
+
+            for i = 2:length(positions)
+                distance = positions(i-1) - positions(i);
+                if distance < min_safe_distance
+                    result.safe = false;
+                    result.distance = distance;
+                    result.required = min_safe_distance;
+                    result.message = sprintf('Following distance violation: %.2f m (min: %.2f m)', ...
+                        distance, min_safe_distance);
+                    return;
                 end
+            end
+        end
 
-                obj.lastWarningTime = currentTime;
+        function result = checkSpeedLimits(obj, velocities)
+            result = struct('safe', true, ...
+                'message', '', ...
+                'speed', 0, ...
+                'limit', obj.config.truck.max_velocity);
+
+            for i = 1:length(velocities)
+                if abs(velocities(i)) > obj.config.truck.max_velocity
+                    result.safe = false;
+                    result.speed = abs(velocities(i));
+                    result.message = sprintf('Speed limit violation: %.2f m/s (max: %.2f m/s)', ...
+                        abs(velocities(i)), obj.config.truck.max_velocity);
+                    return;
+                end
+            end
+        end
+
+        function result = checkAccelerationLimits(obj, accelerations)
+            result = struct('safe', true, ...
+                'message', '', ...
+                'acceleration', 0, ...
+                'limit', struct('max', obj.config.truck.max_acceleration, ...
+                'min', obj.config.truck.max_deceleration));
+
+            for i = 1:length(accelerations)
+                if accelerations(i) > obj.config.truck.max_acceleration || ...
+                        accelerations(i) < obj.config.truck.max_deceleration
+                    result.safe = false;
+                    result.acceleration = accelerations(i);
+                    result.message = sprintf('Acceleration limit violation: %.2f m/s² (limits: %.2f to %.2f)', ...
+                        accelerations(i), obj.config.truck.max_deceleration, ...
+                        obj.config.truck.max_acceleration);
+                    return;
+                end
+            end
+        end
+
+        function result = checkJerkLimits(obj, jerks)
+            result = struct('safe', true, ...
+                'message', '', ...
+                'jerk', 0, ...
+                'limit', obj.config.truck.max_jerk);
+
+            for i = 1:length(jerks)
+                if abs(jerks(i)) > obj.config.truck.max_jerk
+                    result.safe = false;
+                    result.jerk = abs(jerks(i));
+                    result.message = sprintf('Jerk limit violation: %.2f m/s³ (max: %.2f)', ...
+                        abs(jerks(i)), obj.config.truck.max_jerk);
+                    return;
+                end
+            end
+        end
+
+        function logViolations(obj, violations)
+            fields = fieldnames(violations);
+            for i = 1:length(fields)
+                field = fields{i};
+                violation = violations.(field);
+                obj.logger.warning('Safety violation: %s', violation.message);
             end
         end
     end
