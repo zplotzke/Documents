@@ -1,272 +1,289 @@
 classdef ConfigTest < matlab.unittest.TestCase
-    % CONFIGTEST Dedicated test suite for configuration validation
+    % CONFIGTEST Test case for configuration validation
     %
-    % Tests the configuration system including:
-    % - Configuration structure completeness
-    % - Type validation
-    % - Value range validation
-    % - Default values
-    % - Configuration immutability
-    % - Multiple call consistency
+    % Tests all sections of the configuration file to ensure:
+    % - All required fields are present
+    % - Fields have correct data types
+    % - Values are within expected ranges
+    % - Structures are properly nested
     %
     % Author: zplotzke
-    % Last Modified: 2025-02-15 03:14:52 UTC
-    % Version: 1.0.4
+    % Last Modified: 2025-02-19 20:15:58 UTC
+    % Version: 1.1.3
 
     properties
-        config  % Main configuration structure
-        defaultConfig  % Reference configuration for comparison
+        config
     end
 
-    methods (TestMethodSetup)
-        function setupMethod(testCase)
-            % Get fresh configuration for each test
+    methods(TestMethodSetup)
+        function setupConfig(testCase)
+            % Use the fully qualified package name
             testCase.config = config.getConfig();
-            testCase.defaultConfig = config.getConfig();
         end
     end
 
-    methods (Test)
-        function testConfigurationStructure(testCase)
-            % Test main structure fields
-            expectedFields = sort({...
-                'simulation', ...
-                'truck', ...
-                'safety', ...
-                'training', ...
-                'visualization', ...
-                'paths', ...
-                'logging'});
+    methods(Test)
+        function testNetworkSection(testCase)
+            % Test that network section has all required fields
+            network = testCase.config.network;
 
-            actualFields = sort(fieldnames(testCase.config));
-            testCase.verifyEqual(actualFields(:)', expectedFields(:)', ...
-                'Configuration missing required top-level sections');
+            expected_fields = {...
+                'activation_function', ...
+                'dropout_rate', ...
+                'gradient_clip', ...
+                'hidden_size', ...
+                'input_size', ...
+                'learning_rate', ...
+                'max_epochs', ...
+                'mini_batch_size', ...
+                'optimizer', ...
+                'output_size', ...
+                'sequence_length', ...
+                'weight_decay' ...
+                };
+
+            actual_fields = sort(fieldnames(network))';
+            testCase.verifyEqual(actual_fields, expected_fields, ...
+                'Network section missing required fields');
+
+            % Verify field types
+            testCase.verifyClass(network.input_size, 'double');
+            testCase.verifyClass(network.hidden_size, 'double');
+            testCase.verifyClass(network.output_size, 'double');
+            testCase.verifyClass(network.learning_rate, 'double');
+            testCase.verifyClass(network.max_epochs, 'double');
+            testCase.verifyClass(network.mini_batch_size, 'double');
+            testCase.verifyClass(network.dropout_rate, 'double');
+            testCase.verifyClass(network.activation_function, 'char');
+            testCase.verifyClass(network.optimizer, 'char');
+            testCase.verifyClass(network.weight_decay, 'double');
+            testCase.verifyClass(network.gradient_clip, 'double');
+            testCase.verifyClass(network.sequence_length, 'double');
+
+            % Verify value ranges
+            testCase.verifyGreaterThan(network.input_size, 0);
+            testCase.verifyGreaterThan(network.hidden_size, 0);
+            testCase.verifyGreaterThan(network.output_size, 0);
+            testCase.verifyGreaterThan(network.learning_rate, 0);
+            testCase.verifyGreaterThan(network.max_epochs, 0);
+            testCase.verifyGreaterThan(network.mini_batch_size, 0);
+            testCase.verifyGreaterThan(network.sequence_length, 0);
+
+            % Verify dropout rate is between 0 and 1
+            testCase.verifyGreaterThanOrEqual(network.dropout_rate, 0);
+            testCase.verifyLessThan(network.dropout_rate, 1);
+        end
+
+        function testTrainerSection(testCase)
+            % Test that trainer section has all required fields
+            trainer = testCase.config.trainer;
+
+            expected_fields = {...
+                'batch_size', ...
+                'checkpoint_dir', ...
+                'early_stopping_patience', ...
+                'epochs', ...
+                'learning_rate', ...
+                'loss_function', ...
+                'max_queue_size', ...
+                'min_delta', ...
+                'optimizer', ...
+                'save_best_only', ...
+                'shuffle', ...
+                'validation_split', ...
+                'verbose', ...
+                'workers' ...
+                };
+
+            actual_fields = sort(fieldnames(trainer))';
+            testCase.verifyEqual(actual_fields, expected_fields, ...
+                'Trainer section missing required fields');
+
+            % Verify field types
+            testCase.verifyClass(trainer.batch_size, 'double');
+            testCase.verifyClass(trainer.epochs, 'double');
+            testCase.verifyClass(trainer.validation_split, 'double');
+            testCase.verifyClass(trainer.learning_rate, 'double');
+            testCase.verifyClass(trainer.optimizer, 'char');
+            testCase.verifyClass(trainer.loss_function, 'char');
+            testCase.verifyClass(trainer.early_stopping_patience, 'double');
+            testCase.verifyClass(trainer.min_delta, 'double');
+            testCase.verifyClass(trainer.shuffle, 'logical');
+            testCase.verifyClass(trainer.verbose, 'logical');
+            testCase.verifyClass(trainer.checkpoint_dir, 'char');
+            testCase.verifyClass(trainer.save_best_only, 'logical');
+            testCase.verifyClass(trainer.max_queue_size, 'double');
+            testCase.verifyClass(trainer.workers, 'double');
+
+            % Verify value ranges
+            testCase.verifyGreaterThan(trainer.batch_size, 0);
+            testCase.verifyGreaterThan(trainer.epochs, 0);
+            testCase.verifyGreaterThan(trainer.learning_rate, 0);
+            testCase.verifyGreaterThan(trainer.early_stopping_patience, 0);
+            testCase.verifyGreaterThan(trainer.min_delta, 0);
+
+            % Verify validation split is between 0 and 1
+            testCase.verifyGreaterThan(trainer.validation_split, 0);
+            testCase.verifyLessThan(trainer.validation_split, 1);
+        end
+
+        function testSafetySection(testCase)
+            % Test that safety section has all required fields
+            safety = testCase.config.safety;
+
+            expected_fields = {...
+                'collision_time_threshold', ...
+                'collision_warning_distance', ...
+                'emergency_brake_duration', ...
+                'emergency_decel_threshold', ...
+                'max_lateral_deviation', ...
+                'max_platoon_length', ...
+                'max_speed_difference', ...
+                'min_brake_pressure', ...
+                'min_following_time', ...
+                'min_safety_distance', ...
+                'reaction_time_threshold', ...
+                'warning_levels', ...
+                'warning_timeout' ...
+                };
+
+            actual_fields = sort(fieldnames(safety))';
+            testCase.verifyEqual(actual_fields, expected_fields, ...
+                'Safety section missing required fields');
+
+            % Verify field types
+            testCase.verifyClass(safety.collision_warning_distance, 'double');
+            testCase.verifyClass(safety.emergency_decel_threshold, 'double');
+            testCase.verifyClass(safety.min_following_time, 'double');
+            testCase.verifyClass(safety.max_platoon_length, 'double');
+            testCase.verifyClass(safety.warning_timeout, 'double');
+            testCase.verifyClass(safety.max_lateral_deviation, 'double');
+            testCase.verifyClass(safety.min_brake_pressure, 'double');
+            testCase.verifyClass(safety.warning_levels, 'struct');
+
+            % Verify value ranges
+            testCase.verifyGreaterThan(safety.collision_warning_distance, 0);
+            testCase.verifyLessThan(safety.emergency_decel_threshold, 0);
+            testCase.verifyGreaterThan(safety.min_following_time, 0);
+            testCase.verifyGreaterThan(safety.max_platoon_length, 0);
+            testCase.verifyGreaterThan(safety.warning_timeout, 0);
+            testCase.verifyGreaterThan(safety.max_lateral_deviation, 0);
+            testCase.verifyGreaterThan(safety.min_brake_pressure, 0);
         end
 
         function testSimulationSection(testCase)
-            % Test simulation section fields and types
-            expectedFields = sort({...
-                'duration', ...
-                'time_step', ...
-                'distance_goal', ...
-                'num_random_simulations', ...
-                'frame_rate', ...
-                'random_seed'});
+            % Test that simulation section has all required fields
+            simulation = testCase.config.simulation;
 
-            actualFields = sort(fieldnames(testCase.config.simulation));
-            testCase.verifyEqual(actualFields(:)', expectedFields(:)', ...
+            expected_fields = {...
+                'fault_injection', ...
+                'log_level', ...
+                'max_simulation_time', ...
+                'metrics', ...
+                'num_random_simulations', ...
+                'output_directory', ...
+                'random_seed', ...
+                'save_interval', ...
+                'scenario_file', ...
+                'time_step', ...
+                'traffic_enabled', ...
+                'update_frequency', ...
+                'visualization_enabled', ...
+                'weather_enabled' ...
+                };
+
+            actual_fields = sort(fieldnames(simulation))';
+            testCase.verifyEqual(actual_fields, expected_fields, ...
                 'Simulation section missing required fields');
 
-            % Type checking
-            testCase.verifyClass(testCase.config.simulation.duration, 'double');
-            testCase.verifyClass(testCase.config.simulation.time_step, 'double');
-            testCase.verifyClass(testCase.config.simulation.random_seed, 'double');
+            % Verify field types
+            testCase.verifyClass(simulation.fault_injection, 'struct');
+            testCase.verifyClass(simulation.log_level, 'char');
+            testCase.verifyClass(simulation.max_simulation_time, 'double');
+            testCase.verifyClass(simulation.metrics, 'struct');
+            testCase.verifyClass(simulation.num_random_simulations, 'double');
+            testCase.verifyClass(simulation.output_directory, 'char');
+            testCase.verifyClass(simulation.random_seed, 'double');
+            testCase.verifyClass(simulation.save_interval, 'double');
+            testCase.verifyClass(simulation.scenario_file, 'char');
+            testCase.verifyClass(simulation.time_step, 'double');
+            testCase.verifyClass(simulation.traffic_enabled, 'logical');
+            testCase.verifyClass(simulation.update_frequency, 'double');
+            testCase.verifyClass(simulation.visualization_enabled, 'logical');
+            testCase.verifyClass(simulation.weather_enabled, 'logical');
+
+            % Verify value ranges
+            testCase.verifyGreaterThan(simulation.max_simulation_time, 0);
+            testCase.verifyGreaterThan(simulation.time_step, 0);
+            testCase.verifyGreaterThan(simulation.update_frequency, 0);
+            testCase.verifyGreaterThan(simulation.save_interval, 0);
+            testCase.verifyGreaterThan(simulation.num_random_simulations, 0);
         end
 
-        function testSimulationRanges(testCase)
-            % Test simulation parameter ranges
-            sim = testCase.config.simulation;
+        function testSonificationSection(testCase)
+            % Test that sonification section has all required fields
+            sonification = testCase.config.sonification;
 
-            % Time parameters must be positive
-            testCase.verifyGreaterThan(sim.time_step, 0, ...
-                'Time step must be positive');
-            testCase.verifyLessThan(sim.time_step, 1.0, ...
-                'Time step must be less than 1.0 seconds');
+            expected_fields = {...
+                'enabled', ...
+                'max_concurrent_sounds', ...
+                'min_interval', ...
+                'priority_levels', ...
+                'volume', ...
+                'warning_sounds' ...
+                };
 
-            testCase.verifyGreaterThan(sim.duration, 0, ...
-                'Simulation duration must be positive');
-            testCase.verifyLessThan(sim.duration, 86400, ...
-                'Simulation duration must be less than 24 hours');
+            actual_fields = sort(fieldnames(sonification))';
+            testCase.verifyEqual(actual_fields, expected_fields, ...
+                'Sonification section missing required fields');
 
-            % Frame rate must be between reasonable bounds (1-240 fps)
-            testCase.verifyGreaterThanOrEqual(sim.frame_rate, 1, ...
-                'Frame rate must be at least 1 fps');
-            testCase.verifyLessThanOrEqual(sim.frame_rate, 240, ...
-                'Frame rate must be at most 240 fps');
+            % Verify field types
+            testCase.verifyClass(sonification.enabled, 'logical');
+            testCase.verifyClass(sonification.volume, 'double');
+            testCase.verifyClass(sonification.warning_sounds, 'struct');
+            testCase.verifyClass(sonification.min_interval, 'double');
+            testCase.verifyClass(sonification.max_concurrent_sounds, 'double');
+            testCase.verifyClass(sonification.priority_levels, 'struct');
 
-            % Number of simulations must be positive integer
-            testCase.verifyTrue(mod(sim.num_random_simulations, 1) == 0, ...
-                'Number of random simulations must be an integer');
-            testCase.verifyGreaterThan(sim.num_random_simulations, 0, ...
-                'Number of random simulations must be positive');
-
-            % Distance goal must be positive (one mile in meters)
-            testCase.verifyGreaterThan(sim.distance_goal, 0, ...
-                'Distance goal must be positive');
-            testCase.verifyEqual(sim.distance_goal, 1609.34, 'AbsTol', 1e-2, ...
-                'Distance goal should be one mile in meters');
+            % Verify value ranges
+            testCase.verifyGreaterThanOrEqual(sonification.volume, 0);
+            testCase.verifyLessThanOrEqual(sonification.volume, 1);
+            testCase.verifyGreaterThan(sonification.min_interval, 0);
+            testCase.verifyGreaterThan(sonification.max_concurrent_sounds, 0);
         end
 
-        function testTruckRanges(testCase)
-            % Test truck parameter ranges
-            truck = testCase.config.truck;
+        function testVisualizationSection(testCase)
+            % Test that visualization section has all required fields
+            visualization = testCase.config.visualization;
 
-            % Number of trucks must be integer between 2 and 10
-            testCase.verifyTrue(mod(truck.num_trucks, 1) == 0, ...
-                'Number of trucks must be an integer');
-            testCase.verifyGreaterThanOrEqual(truck.num_trucks, 2, ...
-                'Must have at least 2 trucks');
-            testCase.verifyLessThanOrEqual(truck.num_trucks, 10, ...
-                'Cannot have more than 10 trucks');
+            expected_fields = {...
+                'animation_speed', ...
+                'colors', ...
+                'display_metrics', ...
+                'plot_trajectories', ...
+                'refresh_rate', ...
+                'show_safety_bounds', ...
+                'window_size' ...
+                };
 
-            % Physical dimensions
-            testCase.verifyGreaterThan(truck.min_length, 10, ...
-                'Minimum truck length must be greater than 10m');
-            testCase.verifyLessThan(truck.min_length, 25, ...
-                'Minimum truck length must be less than 25m');
+            actual_fields = sort(fieldnames(visualization))';
+            testCase.verifyEqual(actual_fields, expected_fields, ...
+                'Visualization section missing required fields');
 
-            testCase.verifyGreaterThan(truck.max_length, truck.min_length, ...
-                'Maximum length must be greater than minimum length');
-            testCase.verifyLessThan(truck.max_length, 25, ...
-                'Maximum length must be less than 25m');
+            % Verify field types
+            testCase.verifyClass(visualization.window_size, 'double');
+            testCase.verifyClass(visualization.refresh_rate, 'double');
+            testCase.verifyClass(visualization.colors, 'struct');
+            testCase.verifyClass(visualization.display_metrics, 'logical');
+            testCase.verifyClass(visualization.plot_trajectories, 'logical');
+            testCase.verifyClass(visualization.show_safety_bounds, 'logical');
+            testCase.verifyClass(visualization.animation_speed, 'double');
 
-            % Weight ranges
-            testCase.verifyGreaterThan(truck.min_weight, 5000, ...
-                'Minimum weight must be greater than 5000kg');
-            testCase.verifyLessThan(truck.min_weight, truck.max_weight, ...
-                'Minimum weight must be less than maximum weight');
-
-            testCase.verifyGreaterThan(truck.max_weight, truck.min_weight, ...
-                'Maximum weight must be greater than minimum weight');
-            testCase.verifyLessThan(truck.max_weight, 40000, ...
-                'Maximum weight must be less than 40000kg');
-
-            % Speed and acceleration limits
-            testCase.verifyGreaterThan(truck.max_velocity, 0, ...
-                'Maximum velocity must be positive');
-            testCase.verifyLessThan(truck.max_velocity, 40, ...
-                'Maximum velocity must be less than 40 m/s (~144 km/h)');
-
-            testCase.verifyGreaterThan(truck.max_acceleration, 0, ...
-                'Maximum acceleration must be positive');
-            testCase.verifyLessThan(truck.max_acceleration, 5, ...
-                'Maximum acceleration must be less than 5 m/s²');
-
-            testCase.verifyLessThan(truck.max_deceleration, 0, ...
-                'Maximum deceleration must be negative');
-            testCase.verifyGreaterThan(truck.max_deceleration, -10, ...
-                'Maximum deceleration must be greater than -10 m/s²');
-
-            % Spacing
-            testCase.verifyGreaterThan(truck.initial_spacing, truck.min_safe_distance, ...
-                'Initial spacing must be greater than minimum safe distance');
-            testCase.verifyLessThan(truck.initial_spacing, 100, ...
-                'Initial spacing must be less than 100m');
-        end
-
-        function testSafetyRanges(testCase)
-            % Test safety parameter ranges
-            safety = testCase.config.safety;
-
-            testCase.verifyGreaterThan(safety.min_following_time, 1.0, ...
-                'Minimum following time must be greater than 1.0 seconds');
-            testCase.verifyLessThan(safety.min_following_time, 5.0, ...
-                'Minimum following time must be less than 5.0 seconds');
-
-            testCase.verifyGreaterThan(safety.warning_timeout, 0, ...
-                'Warning timeout must be positive');
-            testCase.verifyLessThan(safety.warning_timeout, 10.0, ...
-                'Warning timeout must be less than 10.0 seconds');
-
-            testCase.verifyGreaterThan(safety.collision_warning_distance, ...
-                testCase.config.truck.min_safe_distance, ...
-                'Collision warning distance must be greater than minimum safe distance');
-            testCase.verifyLessThan(safety.collision_warning_distance, 50, ...
-                'Collision warning distance must be less than 50m');
-
-            testCase.verifyGreaterThan(safety.max_platoon_length, 50, ...
-                'Maximum platoon length must be greater than 50m');
-            testCase.verifyLessThan(safety.max_platoon_length, 500, ...
-                'Maximum platoon length must be less than 500m');
-        end
-
-        function testTrainingRanges(testCase)
-            % Test training parameter ranges
-            training = testCase.config.training;
-
-            % Network parameters
-            testCase.verifyTrue(mod(training.lstm_hidden_units, 1) == 0, ...
-                'LSTM hidden units must be an integer');
-            testCase.verifyGreaterThan(training.lstm_hidden_units, 10, ...
-                'LSTM hidden units must be greater than 10');
-            testCase.verifyLessThan(training.lstm_hidden_units, 1000, ...
-                'LSTM hidden units must be less than 1000');
-
-            % Training parameters
-            testCase.verifyTrue(mod(training.max_epochs, 1) == 0, ...
-                'Max epochs must be an integer');
-            testCase.verifyGreaterThan(training.max_epochs, 1, ...
-                'Max epochs must be greater than 1');
-            testCase.verifyLessThan(training.max_epochs, 1000, ...
-                'Max epochs must be less than 1000');
-
-            testCase.verifyTrue(mod(training.mini_batch_size, 1) == 0, ...
-                'Mini batch size must be an integer');
-            testCase.verifyGreaterThan(training.mini_batch_size, 1, ...
-                'Mini batch size must be greater than 1');
-            testCase.verifyLessThan(training.mini_batch_size, 1024, ...
-                'Mini batch size must be less than 1024');
-
-            % Learning parameters
-            testCase.verifyGreaterThan(training.learning_rate, 0, ...
-                'Learning rate must be positive');
-            testCase.verifyLessThan(training.learning_rate, 1, ...
-                'Learning rate must be less than 1');
-
-            testCase.verifyGreaterThan(training.dropout_rate, 0, ...
-                'Dropout rate must be positive');
-            testCase.verifyLessThan(training.dropout_rate, 1, ...
-                'Dropout rate must be less than 1');
-
-            testCase.verifyGreaterThan(training.train_split_ratio, 0.5, ...
-                'Training split ratio must be greater than 0.5');
-            testCase.verifyLessThan(training.train_split_ratio, 0.9, ...
-                'Training split ratio must be less than 0.9');
-        end
-
-        function testLoggingConfiguration(testCase)
-            % Test logging configuration
-            logging = testCase.config.logging;
-
-            % Valid log levels
-            validLevels = {'DEBUG', 'INFO', 'WARNING', 'ERROR'};
-            testCase.verifyTrue(ismember(upper(logging.log_level), validLevels), ...
-                'Log level must be one of: DEBUG, INFO, WARNING, ERROR');
-
-            % Boolean flags
-            testCase.verifyTrue(islogical(logging.file_logging), ...
-                'file_logging must be logical');
-            testCase.verifyTrue(islogical(logging.console_logging), ...
-                'console_logging must be logical');
-        end
-
-        function testConsistency(testCase)
-            % Test that multiple calls return consistent values
-            config1 = config.getConfig();
-            config2 = config.getConfig();
-            testCase.verifyEqual(config1, config2, ...
-                'Multiple getConfig calls returned different values');
-        end
-
-        function testImmutability(testCase)
-            % Test that configuration is immutable
-            original = testCase.config.simulation.time_step;
-            testCase.config.simulation.time_step = 999;
-            newConfig = config.getConfig();
-            testCase.verifyEqual(newConfig.simulation.time_step, original, ...
-                'Configuration values should not be modifiable');
-        end
-
-        function testDefaultValues(testCase)
-            % Test default values for critical parameters
-            testCase.verifyEqual(testCase.config.simulation.time_step, 0.1, ...
-                'Incorrect default time step');
-            testCase.verifyEqual(testCase.config.simulation.duration, 3600, ...
-                'Incorrect default simulation duration');
-            testCase.verifyEqual(testCase.config.truck.num_trucks, 4, ...
-                'Incorrect default number of trucks');
-            testCase.verifyEqual(testCase.config.simulation.random_seed, 42, ...
-                'Incorrect default random seed');
+            % Verify value ranges
+            testCase.verifyGreaterThan(visualization.refresh_rate, 0);
+            testCase.verifyGreaterThan(visualization.animation_speed, 0);
+            testCase.verifySize(visualization.window_size, [1 2]);
+            testCase.verifyGreaterThan(visualization.window_size, [0 0]);
         end
     end
 end

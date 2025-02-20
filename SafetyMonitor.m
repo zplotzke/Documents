@@ -8,8 +8,8 @@ classdef SafetyMonitor < handle
     % - Jerk limits
     %
     % Author: zplotzke
-    % Last Modified: 2025-02-19 15:25:04 UTC
-    % Version: 1.1.2
+    % Last Modified: 2025-02-19 20:05:04 UTC
+    % Version: 1.1.3
 
     properties (Access = private)
         config          % Configuration settings
@@ -97,6 +97,25 @@ classdef SafetyMonitor < handle
                 obj.logViolations(violations);
             end
         end
+
+        function logViolations(obj, violations, time)
+            % LOGVIOLATIONS Log safety violations with timestamps
+            %
+            % Parameters:
+            %   violations - Structure containing violation details
+            %   time - Current simulation time (optional)
+
+            fields = fieldnames(violations);
+            for i = 1:length(fields)
+                field = fields{i};
+                violation = violations.(field);
+                if nargin > 2
+                    obj.logger.warning('Safety violation at t=%.2fs: %s', time, violation.message);
+                else
+                    obj.logger.warning('Safety violation: %s', violation.message);
+                end
+            end
+        end
     end
 
     methods (Access = private)
@@ -109,7 +128,7 @@ classdef SafetyMonitor < handle
             min_safe_distance = obj.config.safety.collision_warning_distance;
 
             for i = 2:length(positions)
-                distance = positions(i-1) - positions(i);
+                distance = positions(i) - positions(i-1);  % Fixed calculation order
                 if distance < min_safe_distance
                     result.safe = false;
                     result.distance = distance;
@@ -172,15 +191,6 @@ classdef SafetyMonitor < handle
                         abs(jerks(i)), obj.config.truck.max_jerk);
                     return;
                 end
-            end
-        end
-
-        function logViolations(obj, violations)
-            fields = fieldnames(violations);
-            for i = 1:length(fields)
-                field = fields{i};
-                violation = violations.(field);
-                obj.logger.warning('Safety violation: %s', violation.message);
             end
         end
     end

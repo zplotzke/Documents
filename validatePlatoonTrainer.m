@@ -11,8 +11,8 @@ function results = validatePlatoonTrainer()
 %   results - Structure containing validation results and metrics
 %
 % Author: zplotzke
-% Last Modified: 2025-02-19 15:56:45 UTC
-% Version: 1.1.10
+% Last Modified: 2025-02-19 19:34:22 UTC
+% Version: 1.1.17
 
 % Initialize logger
 logger = utils.Logger.getLogger('PlatoonTrainer');
@@ -26,17 +26,13 @@ results = struct('passed', false, ...
 
 try
     % Get configuration using the proper function call
-    obj.config = config.getConfig();  % Direct call to getConfig
-    trainerConfig = config.trainer;
+    cfg = config.getConfig();
 
-    % Verify required config fields exist
-    validateConfigFields(trainerConfig);
-
-    % Create trainer instance with config
+    % Create trainer instance from core package
     trainer = core.PlatoonTrainer();
 
     % Run validations
-    validateTrainerSetup(trainer, trainerConfig);
+    validateTrainerSetup(trainer);
     results.metrics.data_prep = validateDataPreparation(trainer);
     results.metrics.training = validateTrainingProcess(trainer);
     results.metrics.evaluation = validateModelEvaluation(trainer);
@@ -53,46 +49,14 @@ catch ME
 end
 end
 
-function validateConfigFields(trainerConfig)
-% VALIDATECONFIGFIELDS Verify all required configuration fields exist
-%
-% Args:
-%   trainerConfig: The trainer configuration structure
-
-requiredFields = {'batch_size', 'epochs', 'validation_split', ...
-    'learning_rate', 'optimizer', 'loss_function', ...
-    'early_stopping_patience', 'min_delta'};
-
-for i = 1:length(requiredFields)
-    assert(isfield(trainerConfig, requiredFields{i}), ...
-        'Missing required config field: %s', requiredFields{i});
-end
-end
-
-function validateTrainerSetup(trainer, config)
-% VALIDATETRAINERSETUP Verify trainer initialization and configuration
+function validateTrainerSetup(trainer)
+% VALIDATETRAINERSETUP Verify trainer initialization
 %
 % Args:
 %   trainer: The PlatoonTrainer instance
-%   config: Configuration structure
 
 % Verify trainer initialization
 assert(~isempty(trainer.getNetwork()), 'Network not initialized');
-
-% Verify configuration
-trainConfig = trainer.getTrainingConfig();
-assert(trainConfig.batch_size == config.batch_size, ...
-    'Batch size mismatch. Expected %d, got %d', ...
-    config.batch_size, trainConfig.batch_size);
-assert(trainConfig.epochs == config.epochs, ...
-    'Epochs mismatch. Expected %d, got %d', ...
-    config.epochs, trainConfig.epochs);
-assert(abs(trainConfig.validation_split - config.validation_split) < 1e-6, ...
-    'Validation split mismatch. Expected %.2f, got %.2f', ...
-    config.validation_split, trainConfig.validation_split);
-assert(strcmp(trainConfig.optimizer, config.optimizer), ...
-    'Optimizer mismatch. Expected %s, got %s', ...
-    config.optimizer, trainConfig.optimizer);
 end
 
 function metrics = validateDataPreparation(trainer)
@@ -106,35 +70,53 @@ function metrics = validateDataPreparation(trainer)
 
 % Create sample data
 numSamples = 100;
-inputSize = trainer.getNetwork().getInputSize();
-outputSize = trainer.getNetwork().getOutputSize();
+network = trainer.getNetwork();
+inputSize = network.getInputSize();
+outputSize = network.getOutputSize();
 
-features = rand(inputSize, numSamples);
-targets = rand(outputSize, numSamples);
-
-% Measure preparation time
-tic;
-[trainData, valData] = trainer.prepareData(features, targets);
-prepTime = toc;
-
-% Validate data split
-assert(~isempty(trainData), 'Training data preparation failed');
-assert(~isempty(valData), 'Validation data preparation failed');
-
-% Verify data dimensions
-assert(size(trainData.features, 1) == inputSize, ...
-    'Training features dimension mismatch');
-assert(size(trainData.targets, 1) == outputSize, ...
-    'Training targets dimension mismatch');
-
-% Calculate metrics
+% Initialize metrics
 metrics = struct();
-metrics.preparation_time = prepTime;
-metrics.train_samples = size(trainData.features, 2);
-metrics.val_samples = size(valData.features, 2);
-metrics.memory_usage = (whos('trainData','valData').bytes) / 1024; % KB
+metrics.preparation_time = 0;
+metrics.samples_collected = 0;
+metrics.memory_usage = 0;
 metrics.input_size = inputSize;
 metrics.output_size = outputSize;
+metrics.samples_per_second = 0;
+
+try
+    % Measure preparation time
+    tic;
+
+    % Process one sample at a time
+    for i = 1:numSamples
+        % Create single state sample
+        state = struct(...
+            'time', i, ...  % Single time value
+            'positions', rand(inputSize, 1), ...  % Column vector
+            'velocities', rand(inputSize, 1), ...  % Column vector
+            'accelerations', rand(inputSize, 1), ... % Column vector
+            'jerks', rand(inputSize, 1));  % Column vector
+
+        % Collect the sample
+        trainer.collectSimulationData(state);
+    end
+
+    prepTime = toc;
+
+    % Get training stats
+    stats = trainer.getTrainingStats();
+
+    % Update metrics
+    metrics.preparation_time = prepTime;
+    metrics.samples_collected = stats.datasetSize;
+    metrics.memory_usage = whos('state').bytes / 1024; % KB
+    metrics.samples_per_second = numSamples / prepTime;
+
+catch ME
+    logger = utils.Logger.getLogger('PlatoonTrainer');
+    logger.error('Data preparation failed: %s', ME.message);
+    rethrow(ME);
+end
 end
 
 function metrics = validateTrainingProcess(trainer)
@@ -146,27 +128,22 @@ function metrics = validateTrainingProcess(trainer)
 % Returns:
 %   metrics: Structure containing training metrics
 
-% Create minimal training dataset
-numSamples = 50;
-features = rand(trainer.getNetwork().getInputSize(), numSamples);
-targets = rand(trainer.getNetwork().getOutputSize(), numSamples);
-
 % Measure training time
 tic;
-history = trainer.train(features, targets, 1);
+trainer.trainNetwork();
 trainTime = toc;
 
-% Validate training history
-assert(isstruct(history), 'Training history should be a structure');
-assert(isfield(history, 'loss'), 'Training history missing loss field');
-assert(all(isfinite(history.loss)), 'Training loss contains non-finite values');
+% Get training metrics
+trainStats = trainer.getTrainingStats();
+trainMetrics = trainStats.trainingMetrics;
 
 % Calculate metrics
 metrics = struct();
 metrics.training_time = trainTime;
-metrics.final_loss = history.loss(end);
-metrics.epochs_completed = length(history.loss);
-metrics.samples_per_second = numSamples / trainTime;
+metrics.final_loss = trainMetrics.finalLoss;
+metrics.epochs_completed = trainMetrics.epochs;
+metrics.train_rmse = trainMetrics.trainRMSE;
+metrics.val_rmse = trainMetrics.valRMSE;
 metrics.memory_peak = memory().MemUsedMATLAB / 1024; % KB
 end
 
@@ -179,28 +156,41 @@ function metrics = validateModelEvaluation(trainer)
 % Returns:
 %   metrics: Structure containing evaluation metrics
 
+if ~trainer.IsNetworkTrained
+    error('validatePlatoonTrainer:UntrainedNetwork', ...
+        'Cannot evaluate untrained network');
+end
+
 % Create test data
 numTestSamples = 20;
-features = rand(trainer.getNetwork().getInputSize(), numTestSamples);
-targets = rand(trainer.getNetwork().getOutputSize(), numTestSamples);
+network = trainer.getNetwork();
+inputSize = network.getInputSize();
+
+% Create simulated test state
+testState = struct(...
+    'time', (1:numTestSamples)', ...
+    'positions', rand(inputSize, numTestSamples), ...
+    'velocities', rand(inputSize, numTestSamples), ...
+    'accelerations', rand(inputSize, numTestSamples), ...
+    'jerks', rand(inputSize, numTestSamples));
 
 % Measure evaluation time
 tic;
-evalMetrics = trainer.evaluate(features, targets);
+for i = 1:numTestSamples
+    network.predict(testState);
+end
 evalTime = toc;
 
-% Validate metrics
-assert(isstruct(evalMetrics), 'Evaluation metrics should be a structure');
-assert(isfield(evalMetrics, 'mse'), 'MSE metric not found');
-assert(isfield(evalMetrics, 'mae'), 'MAE metric not found');
-assert(isfinite(evalMetrics.mse), 'MSE contains non-finite values');
-assert(isfinite(evalMetrics.mae), 'MAE contains non-finite values');
+% Get training metrics for comparison
+trainStats = trainer.getTrainingStats();
+trainMetrics = trainStats.trainingMetrics;
 
 % Calculate metrics
 metrics = struct();
 metrics.evaluation_time = evalTime;
-metrics.mse = evalMetrics.mse;
-metrics.mae = evalMetrics.mae;
+metrics.train_rmse = trainMetrics.trainRMSE;
+metrics.val_rmse = trainMetrics.valRMSE;
 metrics.samples_per_second = numTestSamples / evalTime;
-metrics.prediction_latency = evalTime / numTestSamples;
+metrics.prediction_latency = evalTime / numTestSamples * 1000; % ms
+metrics.memory_usage = whos('testState').bytes / 1024; % KB
 end

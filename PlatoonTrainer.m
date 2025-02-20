@@ -1,96 +1,185 @@
 classdef PlatoonTrainer < handle
-    % PLATOONTRAINER Training management for truck platoon LSTM network
+    % PLATOONTRAINER Trainer for truck platoon control system
+    %
+    % This class handles the training process for the truck platoon
+    % control system, including:
+    % - Data preparation via simulation
+    % - Network training
+    % - Model evaluation
+    % - Metrics collection
     %
     % Author: zplotzke
-    % Last Modified: 2025-02-15 05:11:34 UTC
-    % Version: 2.0.8
-
-    properties (SetAccess = private, GetAccess = public)
-        IsNetworkTrained  % Boolean indicating if network is trained
-        DatasetSize      % Number of collected training samples
-        NetworkConfig    % Current network configuration
-        TrainingMetrics  % Training performance metrics
-    end
+    % Last Modified: 2025-02-19 21:02:24 UTC
+    % Version: 1.1.8
 
     properties (Access = private)
-        config              % Configuration settings
-        logger             % Logger instance
-        network            % LSTM network instance
-        trainingData       % Collected training data
-        validationData     % Validation dataset
-        preprocessStats    % Data preprocessing statistics
-        trainingStartTime  % Time when training started
+        config      % Configuration settings
+        network     % LSTM network instance
+        metrics     % Training metrics
+        logger      % Logger instance
+        data        % Collected simulation data
+        stats       % Training statistics
+        simulator   % Truck platoon simulator instance
     end
 
     methods
         function obj = PlatoonTrainer()
-            try
-                % Initialize logger first
-                obj.logger = utils.Logger.getLogger('PlatoonTrainer');
+            % Initialize trainer with configuration
+            obj.config = config.getConfig();
+            obj.network = ml.LSTMNetwork();
+            obj.metrics = struct();
+            obj.logger = utils.Logger('PlatoonTrainer');
+            obj.logger.info('PlatoonTrainer initialized with LSTM network');
+            obj.data = struct('sequences', [], 'targets', []);
+            obj.stats = struct(...
+                'datasetSize', 0, ...
+                'num_sequences', 0, ...
+                'sequence_length', 0, ...
+                'num_features', 0, ...
+                'num_targets', 0, ...
+                'num_vehicles', 0, ...
+                'total_timesteps', 0, ...
+                'training_sequences', 0, ...
+                'validation_sequences', 0, ...
+                'mean_sequence_spacing', 0, ...
+                'std_sequence_spacing', 0, ...
+                'data_collection_time', 0);
 
-                % Get configuration directly
-                obj.config = config.getConfig();
-
-                % Initialize components
-                obj.network = ml.LSTMNetwork();
-                obj.initializeDataStructures();
-
-                % Initialize public properties
-                obj.IsNetworkTrained = false;
-                obj.DatasetSize = 0;
-                obj.NetworkConfig = obj.config.trainer;
-                obj.TrainingMetrics = struct(...
-                    'trainRMSE', [], ...
-                    'valRMSE', [], ...
-                    'trainTime', [], ...
-                    'epochs', [], ...
-                    'finalLoss', []);
-
-                obj.logger.info('PlatoonTrainer initialized with LSTM network');
-
-            catch ME
-                if ~isempty(obj.logger)
-                    obj.logger.error('Initialization failed: %s', ME.message);
-                end
-                error('PlatoonTrainer:InitializationError', ...
-                    'Failed to initialize PlatoonTrainer: %s', ME.message);
-            end
+            % Initialize simulator with correct package reference
+            obj.simulator = core.TruckPlatoonSimulation();
         end
 
-        function collectSimulationData(obj, state)
-            % COLLECTSIMULATIONDATA Collect state data from simulation
-            if obj.IsNetworkTrained
-                obj.logger.warning('Collecting data after network training');
+        function network = getNetwork(obj)
+            % GETNETWORK Get the LSTM network instance
+            network = obj.network;
+        end
+
+        function stats = getTrainingStats(obj)
+            % GETTRAININGSTATS Get statistics about the collected training data
+            if ~isempty(obj.data.sequences)
+                [num_features, seq_length, num_sequences] = size(obj.data.sequences);
+                [num_targets, ~] = size(obj.data.targets);
+                num_vehicles = obj.config.truck.num_trucks;
+
+                % Update stats
+                obj.stats.datasetSize = num_sequences * seq_length;
+                obj.stats.num_sequences = num_sequences;
+                obj.stats.sequence_length = seq_length;
+                obj.stats.num_features = num_features;
+                obj.stats.num_targets = num_targets;
+                obj.stats.num_vehicles = num_vehicles;
+                obj.stats.total_timesteps = num_sequences + seq_length - 1;
+
+                % Calculate training/validation split
+                val_split = obj.config.trainer.validation_split;
+                obj.stats.training_sequences = round(num_sequences * (1 - val_split));
+                obj.stats.validation_sequences = num_sequences - obj.stats.training_sequences;
+
+                % Update timing stats if time data is available
+                if isfield(obj.data, 'collection_times')
+                    times = obj.data.collection_times;
+                    obj.stats.mean_sequence_spacing = mean(diff(times));
+                    obj.stats.std_sequence_spacing = std(diff(times));
+                    obj.stats.data_collection_time = times(end) - times(1);
+                end
             end
 
-            % Add state to training data
-            obj.addStateToTrainingData(state);
+            stats = obj.stats;
+        end
+
+        function collectSimulationData(obj, ~)
+            % COLLECTSIMULATIONDATA Collect data from truck platoon simulation
+            %
+            % Runs simulation 10 times with different parameters to collect
+            % training data, including both safe and unsafe scenarios
+
+            try
+                % Check if we've already collected 10 iterations
+                if ~isfield(obj.data, 'iteration_count')
+                    obj.data.iteration_count = 0;
+                end
+
+                if obj.data.iteration_count >= 10
+                    obj.logger.info('Maximum iterations (10) reached, skipping data collection');
+                    return;
+                end
+
+                % Reset and randomize simulator
+                obj.simulator.reset();
+                obj.simulator.randomizeParameters();
+                obj.simulator.startSimulation('training');
+
+                % Collect simulation data
+                positions = [];
+                velocities = [];
+                accelerations = [];
+                times = [];
+
+                while ~obj.simulator.isFinished()
+                    state = obj.simulator.step();
+
+                    % Collect state data
+                    positions = cat(3, positions, state.positions);
+                    velocities = cat(3, velocities, state.velocities);
+                    accelerations = cat(3, accelerations, state.accelerations);
+                    times = [times; state.time];
+                end
+
+                % Format data for sequence processing
+                sim_state = struct(...
+                    'position', positions, ...
+                    'velocity', velocities, ...
+                    'acceleration', accelerations, ...
+                    'time', times, ...
+                    'target_state', obj.computeTargetStates(positions, velocities));
+
+                % Get sequence parameters
+                seq_length = obj.network.getSequenceLength();
+                if isempty(seq_length)
+                    seq_length = 10;  % Default value
+                    obj.logger.warning('Using default sequence length: %d', seq_length);
+                end
+
+                % Process state into sequences
+                [sequences, targets] = obj.processStateIntoSequences(sim_state, seq_length);
+
+                % Store or append data
+                if isempty(obj.data.sequences)
+                    obj.data.sequences = sequences;
+                    obj.data.targets = targets;
+                    obj.data.collection_times = times(1);
+                else
+                    obj.data.sequences = cat(3, obj.data.sequences, sequences);
+                    obj.data.targets = cat(2, obj.data.targets, targets);
+                    obj.data.collection_times = [obj.data.collection_times; times(1)];
+                end
+
+                % Increment iteration count
+                obj.data.iteration_count = obj.data.iteration_count + 1;
+
+                obj.logger.info('Collected %d new sequences from simulation (iteration %d/10)', ...
+                    size(sequences, 3), obj.data.iteration_count);
+
+            catch ME
+                obj.logger.error('Data collection failed: %s', ME.message);
+                rethrow(ME);
+            end
         end
 
         function trainNetwork(obj)
-            % TRAINNETWORK Train LSTM network on collected data
-            if isempty(obj.trainingData.time)
-                obj.logger.error('No training data available');
-                return;
-            end
-
+            % TRAINNETWORK Train the LSTM network using collected data
             try
-                % Preprocess data
-                [X, Y] = obj.preprocessTrainingData();
+                % Get training data
+                [XTrain, YTrain, XVal, YVal] = obj.prepareTrainingData();
 
-                % Split into training and validation sets
-                [XTrain, YTrain, XVal, YVal] = obj.splitTrainingData(X, Y);
+                % Train LSTM network
+                [trained_net, metrics] = obj.trainLSTM(XTrain, YTrain, XVal, YVal);
 
-                % Train network
-                obj.logger.info('Starting LSTM network training...');
-                [obj.network, metrics] = obj.trainLSTM(XTrain, YTrain, XVal, YVal);
-                obj.TrainingMetrics = metrics;
+                % Store trained network
+                obj.network.setTrainedNetwork(trained_net);
 
-                obj.IsNetworkTrained = true;
-                obj.logger.info('Network training completed successfully');
-
-                % Validate network performance
-                obj.validateNetwork(XVal, YVal);
+                % Store metrics
+                obj.metrics = metrics;
 
             catch ME
                 obj.logger.error('Network training failed: %s', ME.message);
@@ -98,221 +187,231 @@ classdef PlatoonTrainer < handle
             end
         end
 
+        function output = predict(obj, sequence)
+            % PREDICT Make predictions using trained network
+            %
+            % Parameters:
+            %   sequence - Input sequence [features × timesteps]
+            %
+            % Returns:
+            %   output - Network predictions
+
+            try
+                output = obj.network.forward(sequence);
+            catch ME
+                obj.logger.error('Prediction failed: %s', ME.message);
+                rethrow(ME);
+            end
+        end
+
         function metrics = getTrainingMetrics(obj)
-            % GETTRAININGMETRICS Get current training metrics
-            metrics = obj.TrainingMetrics;
+            % GETTRAININGMETRICS Get training metrics
+            metrics = obj.metrics;
+        end
 
-            % If metrics are empty, return default structure
-            if isempty(metrics)
-                metrics = struct(...
-                    'trainRMSE', [], ...
-                    'valRMSE', [], ...
-                    'trainTime', [], ...
-                    'epochs', [], ...
-                    'finalLoss', [], ...
-                    'learningCurve', struct(...
-                    'trainRMSE', [], ...
-                    'valRMSE', [], ...
-                    'iterations', [] ...
-                    ) ...
-                    );
+        function saveNetwork(obj, filename)
+            % SAVENETWORK Save trained network to file
+            %
+            % Parameters:
+            %   filename - Path to save the network
+
+            try
+                network = obj.network;
+                metrics = obj.metrics;
+                save(filename, 'network', 'metrics', '-v7.3');
+                obj.logger.info('Network saved successfully to: %s', filename);
+            catch ME
+                obj.logger.error('Failed to save network: %s', ME.message);
+                rethrow(ME);
             end
         end
 
-        function stats = getTrainingStats(obj)
-            % GETTRAININGSTATS Get detailed training statistics
-            stats = struct(...
-                'isNetworkTrained', obj.IsNetworkTrained, ...
-                'datasetSize', obj.DatasetSize, ...
-                'networkConfig', obj.NetworkConfig, ...
-                'trainingMetrics', obj.getTrainingMetrics() ...
-                );
-        end
+        function loadNetwork(obj, filename)
+            % LOADNETWORK Load trained network from file
+            %
+            % Parameters:
+            %   filename - Path to the saved network
 
-        function net = getNetwork(obj)
-            % GETNETWORK Get trained network
-            if ~obj.IsNetworkTrained
-                obj.logger.warning('Attempting to get untrained network');
+            try
+                data = load(filename);
+                obj.network.setTrainedNetwork(data.network);
+                obj.metrics = data.metrics;
+                obj.logger.info('Network loaded successfully from: %s', filename);
+            catch ME
+                obj.logger.error('Failed to load network: %s', ME.message);
+                rethrow(ME);
             end
-            net = obj.network;
         end
     end
 
     methods (Access = private)
-        function initializeDataStructures(obj)
-            % Initialize data structures for training
-            obj.trainingData = struct(...
-                'time', [], ...
-                'positions', [], ...
-                'velocities', [], ...
-                'accelerations', [], ...
-                'jerks', [] ...
-                );
+        function target_states = computeTargetStates(obj, positions, velocities)
+            % COMPUTETARGETSTATES Compute target states from simulation data
+            %
+            % Computes desired future states based on current positions and velocities
 
-            obj.validationData = [];
-            obj.preprocessStats = struct(...
-                'dataMin', [], ...
-                'dataMax', [], ...
-                'meanVals', [], ...
-                'stdVals', [] ...
-                );
+            [~, num_vehicles, num_timesteps] = size(positions);
+            target_dim = 6;  % [x,y,heading,v_x,v_y,omega]
+            target_states = zeros(target_dim, num_timesteps);
+
+            % For now, just use lead vehicle's state as target
+            % In practice, this would involve more sophisticated prediction
+            lead_idx = 1;
+            for t = 1:num_timesteps
+                target_states(1:3,t) = positions(:,lead_idx,t);
+                target_states(4:6,t) = velocities(:,lead_idx,t);
+            end
         end
 
-        function addStateToTrainingData(obj, state)
-            % Add simulation state to training data
-            validateState(obj, state);
+        function [sequences, targets] = processStateIntoSequences(obj, state, seq_length)
+            % Process simulation state into training sequences
 
-            idx = length(obj.trainingData.time) + 1;
-            obj.trainingData.time(idx) = state.time;
-            obj.trainingData.positions(:,idx) = state.positions;
-            obj.trainingData.velocities(:,idx) = state.velocities;
-            obj.trainingData.accelerations(:,idx) = state.accelerations;
-            obj.trainingData.jerks(:,idx) = state.jerks;
+            % Extract state components
+            position = state.position;      % [x,y,heading] × vehicles × timesteps
+            velocity = state.velocity;      % [v_x,v_y,omega] × vehicles × timesteps
+            acceleration = state.acceleration; % [a_x,a_y,alpha] × vehicles × timesteps
+            time = state.time;             % time vector
+            target_state = state.target_state; % target states
 
-            % Update dataset size
-            obj.DatasetSize = idx;
-        end
+            % Get dimensions
+            [~, num_vehicles, num_timesteps] = size(position);
 
-        function [X, Y] = preprocessTrainingData(obj)
-            % Preprocess training data for LSTM
-            if isempty(obj.trainingData.time)
-                error('PlatoonTrainer:EmptyData', 'No training data available');
+            % Validate data dimensions
+            if num_timesteps < seq_length
+                throw(MException('PlatoonTrainer:InsufficientData', ...
+                    'Not enough timesteps for sequence creation'));
             end
 
-            % Combine features
-            rawFeatures = [obj.trainingData.positions;
-                obj.trainingData.velocities;
-                obj.trainingData.accelerations;
-                obj.trainingData.jerks];
+            % Calculate number of sequences
+            num_sequences = num_timesteps - seq_length + 1;
 
-            % Normalize data
-            X = obj.normalizeData(rawFeatures);
+            % Combine state information
+            % Features: [position; velocity; acceleration] for each vehicle
+            num_features_per_vehicle = 9;  % 3 pos + 3 vel + 3 acc
+            num_features = num_features_per_vehicle * num_vehicles;
 
-            % Create target data (next state predictions)
-            Y = X(:,2:end);
-            X = X(:,1:end-1);
+            % Initialize output arrays
+            sequences = zeros(num_features, seq_length, num_sequences);
+            targets = zeros(size(target_state, 1), num_sequences);
 
-            % Reshape for LSTM [features x sequence_length x samples]
-            X = obj.reshapeForLSTM(X);
-            Y = obj.reshapeForLSTM(Y);
-        end
+            % Create sequences
+            for i = 1:num_sequences
+                seq_idx = i:i+seq_length-1;
 
-        function data = normalizeData(obj, data)
-            % Normalize data using z-score normalization
-            obj.preprocessStats.meanVals = mean(data, 2);
-            obj.preprocessStats.stdVals = std(data, 0, 2);
+                % Build feature vector for each timestep
+                for t = 1:seq_length
+                    idx = seq_idx(t);
+                    feature_idx = 1;
 
-            % Handle constant features
-            constFeatures = obj.preprocessStats.stdVals < eps;
-            obj.preprocessStats.stdVals(constFeatures) = 1;
+                    for v = 1:num_vehicles
+                        % Add position data
+                        sequences(feature_idx:feature_idx+2, t, i) = position(:,v,idx);
+                        feature_idx = feature_idx + 3;
 
-            % Normalize
-            data = (data - obj.preprocessStats.meanVals) ./ obj.preprocessStats.stdVals;
-        end
+                        % Add velocity data
+                        sequences(feature_idx:feature_idx+2, t, i) = velocity(:,v,idx);
+                        feature_idx = feature_idx + 3;
 
-        function data = reshapeForLSTM(obj, data)
-            % Reshape data for LSTM [features x sequence_length x samples]
-            [numFeatures, numTimesteps] = size(data);
-            numSequences = floor(numTimesteps / obj.config.training.sequence_length);
+                        % Add acceleration data
+                        sequences(feature_idx:feature_idx+2, t, i) = acceleration(:,v,idx);
+                        feature_idx = feature_idx + 3;
+                    end
+                end
 
-            if numSequences == 0
-                error('PlatoonTrainer:InsufficientData', ...
-                    'Not enough timesteps for sequence length');
+                % Store target state
+                targets(:,i) = target_state(:,i+seq_length-1);
             end
-
-            % Keep only complete sequences
-            useTimesteps = numSequences * obj.config.training.sequence_length;
-            data = data(:, 1:useTimesteps);
-
-            % Reshape
-            data = reshape(data, numFeatures, ...
-                obj.config.training.sequence_length, numSequences);
         end
 
-        function [XTrain, YTrain, XVal, YVal] = splitTrainingData(obj, X, Y)
-            % Split data into training and validation sets
-            numSequences = size(X, 3);
-            trainRatio = obj.config.training.train_split_ratio;
+        function [XTrain, YTrain, XVal, YVal] = prepareTrainingData(obj)
+            % PREPARETRAININGDATA Prepare data for network training
+            %
+            % Returns:
+            %   XTrain - Training input sequences
+            %   YTrain - Training target values
+            %   XVal   - Validation input sequences
+            %   YVal   - Validation target values
 
-            % Randomize split
-            rng(obj.config.simulation.random_seed);
-            idx = randperm(numSequences);
-            trainIdx = idx(1:floor(trainRatio * numSequences));
-            valIdx = idx(floor(trainRatio * numSequences) + 1:end);
+            % Load and preprocess data
+            data = struct('X', obj.data.sequences, 'Y', obj.data.targets);
+
+            % Split into training and validation sets
+            val_split = obj.config.trainer.validation_split;
+            num_sequences = size(data.X, 3);
+            num_val = round(num_sequences * val_split);
+
+            % Randomly shuffle data
+            if obj.config.trainer.shuffle
+                idx = randperm(num_sequences);
+                data.X = data.X(:,:,idx);
+                data.Y = data.Y(:,idx);
+            end
 
             % Split data
-            XTrain = X(:,:,trainIdx);
-            YTrain = Y(:,:,trainIdx);
-            XVal = X(:,:,valIdx);
-            YVal = Y(:,:,valIdx);
+            XTrain = data.X(:,:,1:end-num_val);
+            YTrain = data.Y(:,1:end-num_val);
+            XVal = data.X(:,:,end-num_val+1:end);
+            YVal = data.Y(:,end-num_val+1:end);
+
+            obj.logger.info('Training data prepared: %d training sequences, %d validation sequences', ...
+                size(XTrain,3), size(XVal,3));
         end
 
-        function [net, metrics] = trainLSTM(obj, XTrain, YTrain, XVal, YVal)
-            % Train LSTM network
-            obj.trainingStartTime = tic;
+        function [trained_net, metrics] = trainLSTM(obj, XTrain, YTrain, XVal, YVal)
+            % TRAINLSTM Train the LSTM network
+            %
+            % Parameters:
+            %   XTrain - Training input sequences
+            %   YTrain - Training target values
+            %   XVal   - Validation input sequences
+            %   YVal   - Validation target values
+            %
+            % Returns:
+            %   trained_net - Trained network
+            %   metrics     - Training metrics
 
-            % Set up training parameters
+            % Get network architecture
+            layers = obj.network.getArchitecture();
+
+            % Configure training options
             options = trainingOptions('adam', ...
-                'MaxEpochs', obj.config.training.max_epochs, ...
-                'MiniBatchSize', obj.config.training.mini_batch_size, ...
-                'InitialLearnRate', obj.config.training.learning_rate, ...
-                'GradientThreshold', obj.config.training.gradient_threshold, ...
+                'MaxEpochs', obj.config.trainer.epochs, ...
+                'MiniBatchSize', obj.config.trainer.batch_size, ...
+                'InitialLearnRate', obj.config.trainer.learning_rate, ...
+                'GradientThreshold', 1, ...
+                'LearnRateSchedule', 'piecewise', ...
+                'LearnRateDropPeriod', 20, ...
+                'LearnRateDropFactor', 0.1, ...
                 'ValidationData', {XVal, YVal}, ...
                 'ValidationFrequency', 10, ...
-                'ValidationPatience', 10, ...
-                'Verbose', false);
+                'ValidationPatience', obj.config.trainer.early_stopping_patience, ...
+                'Shuffle', 'every-epoch', ...
+                'Verbose', obj.config.trainer.verbose, ...
+                'Plots', 'none');
 
             % Train network
-            [net, info] = trainNetwork(XTrain, YTrain, obj.network.getArchitecture(), options);
+            try
+                obj.logger.info('Starting LSTM network training...');
+                [net, info] = trainNetwork(XTrain, YTrain, layers, options);
 
-            % Calculate metrics
-            trainTime = toc(obj.trainingStartTime);
-            metrics = obj.calculateTrainingMetrics(net, info, XTrain, YTrain, XVal, YVal, trainTime);
-        end
+                % Collect metrics
+                metrics = struct(...
+                    'training_loss', info.TrainingLoss, ...
+                    'validation_loss', info.ValidationLoss, ...
+                    'training_rmse', info.TrainingRMSE, ...
+                    'validation_rmse', info.ValidationRMSE, ...
+                    'final_validation_loss', info.ValidationLoss(end), ...
+                    'best_validation_epoch', info.BestEpoch, ...
+                    'training_time', info.TrainingTime, ...
+                    'final_learning_rate', info.FinalLearnRate);
 
-        function metrics = calculateTrainingMetrics(obj, net, info, XTrain, YTrain, XVal, YVal, trainTime)
-            % Calculate detailed training metrics
-            YPredTrain = predict(net, XTrain);
-            YPredVal = predict(net, XVal);
+                trained_net = net;
+                obj.logger.info('LSTM network training completed successfully in %.2f seconds', ...
+                    info.TrainingTime);
 
-            metrics = struct(...
-                'trainRMSE', sqrt(mean((YPredTrain - YTrain).^2, 'all')), ...
-                'valRMSE', sqrt(mean((YPredVal - YVal).^2, 'all')), ...
-                'trainTime', trainTime, ...
-                'epochs', numel(info.TrainingRMSE), ...
-                'finalLoss', info.FinalValidationLoss, ...
-                'learningCurve', struct(...
-                'trainRMSE', info.TrainingRMSE, ...
-                'valRMSE', info.ValidationRMSE, ...
-                'iterations', 1:numel(info.TrainingRMSE) ...
-                ) ...
-                );
-        end
-
-        function validateState(~, state)
-            % Validate simulation state structure
-            required_fields = {'time', 'positions', 'velocities', ...
-                'accelerations', 'jerks'};
-
-            for i = 1:length(required_fields)
-                if ~isfield(state, required_fields{i})
-                    error('PlatoonTrainer:InvalidState', ...
-                        'Missing required field: %s', required_fields{i});
-                end
-            end
-        end
-
-        function validateNetwork(obj, XVal, YVal)
-            % Validate network performance
-            YPred = predict(obj.network, XVal);
-            rmse = sqrt(mean((YPred - YVal).^2, 'all'));
-
-            obj.logger.info('Validation RMSE: %.4f', rmse);
-            obj.TrainingMetrics.validationRMSE = rmse;
-
-            % Check for overfitting
-            if rmse > 3 * obj.TrainingMetrics.trainRMSE
-                obj.logger.warning('Possible overfitting detected');
+            catch ME
+                obj.logger.error('LSTM training failed: %s', ME.message);
+                rethrow(ME);
             end
         end
     end

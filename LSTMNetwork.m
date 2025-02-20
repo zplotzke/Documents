@@ -1,188 +1,310 @@
 classdef LSTMNetwork < handle
-    % LSTMNETWORK Long Short-Term Memory Network implementation
+    % LSTMNETWORK LSTM Neural Network for truck platoon control
+    %
+    % This class implements a Long Short-Term Memory (LSTM) neural network
+    % specifically designed for truck platoon control. It handles:
+    % - Network architecture definition
+    % - Hyperparameter management
+    % - Sequence processing configuration
+    % - Training preparation
+    % - Forward pass prediction
+    %
+    % Example:
+    %   network = ml.LSTMNetwork();
+    %   layers = network.getArchitecture();
+    %   network.setHyperparameters(struct('hidden_size', 128));
+    %   output = network.forward(input_sequence);
     %
     % Author: zplotzke
-    % Last Modified: 2025-02-19 17:53:48 UTC
-    % Version: 1.3.28
+    % Last Modified: 2025-02-19 20:24:31 UTC
+    % Version: 1.1.2
 
-    properties
-        InputSize
-        HiddenSize
-        OutputSize
-        Network
-        Config
-        TrainingOptions
+    properties (Access = private)
+        config          % Configuration settings
+        input_size     % Size of input features
+        hidden_size    % Number of hidden units
+        output_size    % Size of output
+        num_layers     % Number of LSTM layers
+        dropout_rate   % Dropout probability
+        sequence_length % Length of input sequences
+        initialized    % Flag indicating if network is initialized
+        net            % Trained network object
     end
 
     methods
         function obj = LSTMNetwork()
             % Initialize LSTM network with configuration
-            import config.*
-            obj.Config = getConfig();
-
-            % Initialize network parameters based on simulation data structure
-            numTrucks = obj.Config.truck.num_trucks;  % Default is 4 trucks
-            numFeaturesPerTruck = 4;  % [position, velocity, acceleration, jerk]
-            obj.InputSize = numTrucks * numFeaturesPerTruck;  % 4 trucks * 4 features = 16
-            obj.HiddenSize = 100;  % Default hidden size
-            obj.OutputSize = obj.InputSize;  % Same as input for state prediction
-
-            % Create the network structure
-            obj.createNetwork();
-
-            % Setup training options
-            obj.setupTrainingOptions();
-
-            % Initialize the network with proper training
-            obj.initializeNetwork();
+            obj.config = config.getConfig();
+            obj.loadConfiguration();
+            obj.initialized = true;
+            obj.net = []; % Will be set after training
         end
 
-        function createNetwork(obj)
-            % Create network with standard LSTM layer
-            layers = [
-                sequenceInputLayer(obj.InputSize, 'Name', 'input')
-                lstmLayer(obj.HiddenSize, 'Name', 'lstm')
-                fullyConnectedLayer(obj.OutputSize, 'Name', 'fc')
-                regressionLayer('Name', 'output')
-                ];
+        function output = forward(obj, sequence)
+            % FORWARD Perform forward pass through the network
+            %
+            % Parameters:
+            %   sequence - Input sequence of shape [features × timesteps]
+            %             or [features × timesteps × batch_size]
+            %
+            % Returns:
+            %   output - Network predictions
+            %
+            % Throws:
+            %   - If network is not trained
+            %   - If input dimensions are invalid
 
-            % Create series network
-            obj.Network = SeriesNetwork(layers);
-        end
-
-        function initializeNetwork(obj)
-            % Initialize network with dummy data that matches simulation structure
-            dummyFeatures = obj.InputSize;
-            dummySequenceLength = 10;
-            dummyBatchSize = 1;
-
-            % Create dummy data in [features × timesteps] format
-            dummyData = rand(dummyFeatures, dummySequenceLength);
-            X = {dummyData};  % Wrap in cell array as MATLAB expects
-
-            % Create simple training options for initialization
-            initOptions = trainingOptions('adam', ...
-                'MaxEpochs', 1, ...
-                'MiniBatchSize', dummyBatchSize, ...
-                'Verbose', false, ...
-                'Shuffle', 'never');
-
-            try
-                % Initialize network with actual training pass
-                obj.Network = trainNetwork(X, X, obj.Network.Layers, initOptions);
-            catch ME
-                error('LSTMNetwork:InitializationError', ...
-                    'Failed to initialize network: %s', ME.message);
-            end
-        end
-
-        function setupTrainingOptions(obj)
-            % Convert boolean shuffle to string option
-            if obj.Config.trainer.shuffle
-                shuffleOption = 'every-epoch';
-            else
-                shuffleOption = 'never';
+            if isempty(obj.net)
+                error('LSTMNetwork:NotTrained', ...
+                    'Network must be trained before making predictions');
             end
 
-            % Setup training options for the network
-            obj.TrainingOptions = trainingOptions('adam', ...
-                'MaxEpochs', obj.Config.trainer.epochs, ...
-                'MiniBatchSize', obj.Config.trainer.batch_size, ...
-                'InitialLearnRate', obj.Config.trainer.learning_rate, ...
-                'ValidationPatience', obj.Config.trainer.early_stopping_patience, ...
-                'ValidationFrequency', 30, ...
-                'Shuffle', shuffleOption, ...
-                'Verbose', logical(obj.Config.trainer.verbose), ...
-                'Plots', 'none');
-        end
-
-        function params = getTrainingParameters(obj)
-            % Get training parameters from config
-            params = struct();
-            params.learning_rate = obj.Config.trainer.learning_rate;
-            params.batch_size = obj.Config.trainer.batch_size;
-            params.epochs = obj.Config.trainer.epochs;
-            params.validation_split = obj.Config.trainer.validation_split;
-            params.optimizer = obj.Config.trainer.optimizer;
-            params.loss_function = obj.Config.trainer.loss_function;
-            params.early_stopping_patience = obj.Config.trainer.early_stopping_patience;
-            params.min_delta = obj.Config.trainer.min_delta;
-            params.shuffle = obj.Config.trainer.shuffle;
-        end
-
-        function size = getInputSize(obj)
-            size = obj.InputSize;
-        end
-
-        function size = getHiddenSize(obj)
-            size = obj.HiddenSize;
-        end
-
-        function size = getOutputSize(obj)
-            size = obj.OutputSize;
-        end
-
-        function validateInputDimensions(obj, input)
-            % Validate input dimensions for [features × timesteps] format
-            if ~iscell(input)
-                if size(input, 1) ~= obj.InputSize
-                    error('LSTMNetwork:InvalidInput', ...
-                        'Input sequence must have feature dimension %d, but got %d', ...
-                        obj.InputSize, size(input, 1));
-                end
-            else
-                if size(input{1}, 1) ~= obj.InputSize
-                    error('LSTMNetwork:InvalidInput', ...
-                        'Input sequence must have feature dimension %d, but got %d', ...
-                        obj.InputSize, size(input{1}, 1));
-                end
-            end
-        end
-
-        function output = forward(obj, input)
             % Validate input dimensions
-            obj.validateInputDimensions(input);
+            [num_features, num_timesteps, batch_size] = obj.validateInputSequence(sequence);
 
-            % Convert input to cell array format that MATLAB's LSTM expects
-            if ~iscell(input)
-                % If input is [features × timesteps], wrap in cell
-                if size(input, 1) == obj.InputSize
-                    X = {input};  % Wrap in cell, keeping [features × timesteps] format
-                else
-                    % If input is [timesteps × features], transpose then wrap
-                    X = {input'};  % Transpose to [features × timesteps] then wrap
-                end
-            else
-                X = input;  % Already in cell format
+            % Ensure sequence is properly formatted for prediction
+            if batch_size == 1
+                sequence = reshape(sequence, [num_features, num_timesteps, 1]);
             end
 
+            % Make prediction
             try
-                % Make prediction using the network
-                Y = predict(obj.Network, X);
-
-                % If output is cell array, extract first sequence
-                if iscell(Y)
-                    output = Y{1};
-                else
-                    output = Y;
-                end
+                output = predict(obj.net, sequence);
             catch ME
                 error('LSTMNetwork:PredictionError', ...
                     'Failed to make prediction: %s', ME.message);
             end
         end
 
-        function output = predict(obj, input)
-            % Make prediction using forward pass
-            output = forward(obj, input);
+        function layers = getArchitecture(obj)
+            % GETARCHITECTURE Get the LSTM network architecture
+            %
+            % Returns:
+            %   layers - Layer graph defining the LSTM network architecture
+            %
+            % The architecture consists of:
+            % 1. Sequence input layer
+            % 2. Multiple LSTM layers with dropout
+            % 3. Fully connected output layer
+            % 4. Regression layer
+
+            if ~obj.initialized
+                error('LSTMNetwork:NotInitialized', ...
+                    'Network must be initialized before getting architecture');
+            end
+
+            layers = layerGraph();
+
+            % Input layer
+            layers = addLayers(layers, sequenceInputLayer(obj.input_size, ...
+                'Name', 'input'));
+
+            % Add LSTM layers with dropout
+            for i = 1:obj.num_layers
+                if i == obj.num_layers
+                    output_mode = 'last';  % Last layer returns only final timestep
+                else
+                    output_mode = 'sequence';  % Interior layers return full sequence
+                end
+
+                lstm_layer = lstmLayer(obj.hidden_size, ...
+                    'Name', sprintf('lstm%d', i), ...
+                    'OutputMode', output_mode);
+
+                dropout_layer = dropoutLayer(obj.dropout_rate, ...
+                    'Name', sprintf('dropout%d', i));
+
+                layers = addLayers(layers, [lstm_layer; dropout_layer]);
+            end
+
+            % Output layers
+            fc_layer = fullyConnectedLayer(obj.output_size, 'Name', 'fc');
+            reg_layer = regressionLayer('Name', 'output');
+
+            layers = addLayers(layers, [fc_layer; reg_layer]);
+
+            % Connect all layers
+            layers = connectLayers(layers, 'input', 'lstm1');
+            for i = 1:obj.num_layers-1
+                layers = connectLayers(layers, ...
+                    sprintf('dropout%d', i), ...
+                    sprintf('lstm%d', i+1));
+            end
+            layers = connectLayers(layers, ...
+                sprintf('dropout%d', obj.num_layers), 'fc');
+        end
+
+        function setSequenceLength(obj, length)
+            % SETSEQUENCELENGTH Set the sequence length for the network
+            %
+            % Parameters:
+            %   length - Number of timesteps in input sequences
+
+            validateattributes(length, {'numeric'}, ...
+                {'positive', 'integer', 'scalar'}, ...
+                'LSTMNetwork/setSequenceLength', 'length');
+            obj.sequence_length = length;
+        end
+
+        function length = getSequenceLength(obj)
+            % GETSEQUENCELENGTH Get the current sequence length
+            length = obj.sequence_length;
+        end
+
+        function inputSize = getInputSize(obj)
+            % GETINPUTSIZE Get the input feature size
+            inputSize = obj.input_size;
+        end
+
+        function outputSize = getOutputSize(obj)
+            % GETOUTPUTSIZE Get the output size
+            outputSize = obj.output_size;
+        end
+
+        function setHyperparameters(obj, params)
+            % SETHYPERPARAMETERS Update network hyperparameters
+            %
+            % Parameters:
+            %   params - Structure containing hyperparameter values to update
+            %
+            % Supported fields:
+            %   hidden_size  - Number of hidden units in LSTM layers
+            %   num_layers   - Number of LSTM layers in the network
+            %   dropout_rate - Probability of dropout during training
+
+            if isfield(params, 'hidden_size')
+                validateattributes(params.hidden_size, {'numeric'}, ...
+                    {'positive', 'integer', 'scalar'}, ...
+                    'LSTMNetwork/setHyperparameters', 'hidden_size');
+                obj.hidden_size = params.hidden_size;
+            end
+
+            if isfield(params, 'num_layers')
+                validateattributes(params.num_layers, {'numeric'}, ...
+                    {'positive', 'integer', 'scalar'}, ...
+                    'LSTMNetwork/setHyperparameters', 'num_layers');
+                obj.num_layers = params.num_layers;
+            end
+
+            if isfield(params, 'dropout_rate')
+                validateattributes(params.dropout_rate, {'numeric'}, ...
+                    {'>=', 0, '<', 1, 'scalar'}, ...
+                    'LSTMNetwork/setHyperparameters', 'dropout_rate');
+                obj.dropout_rate = params.dropout_rate;
+            end
+        end
+
+        function params = getHyperparameters(obj)
+            % GETHYPERPARAMETERS Get current network hyperparameters
+            %
+            % Returns:
+            %   params - Structure containing current hyperparameter values
+
+            params = struct(...
+                'input_size', obj.input_size, ...
+                'hidden_size', obj.hidden_size, ...
+                'output_size', obj.output_size, ...
+                'num_layers', obj.num_layers, ...
+                'dropout_rate', obj.dropout_rate, ...
+                'sequence_length', obj.sequence_length);
+        end
+
+        function setTrainedNetwork(obj, trained_net)
+            % SETTRAINEDNETWORK Set the trained network object
+            %
+            % Parameters:
+            %   trained_net - Trained MATLAB neural network object
+
+            obj.net = trained_net;
         end
     end
 
-    methods(Static)
-        function weights = initializeGlorot(fanOut, fanIn)
-            % Initialize weights using Glorot initialization
-            r = sqrt(6 / (fanIn + fanOut));
-            weights = (2 * r) * rand(fanOut, fanIn, 'single') - r;
+    methods (Access = private)
+        function loadConfiguration(obj)
+            % Load network configuration from config file
+            network_config = obj.config.network;
+
+            % Required parameters
+            obj.input_size = network_config.input_size;
+            obj.hidden_size = network_config.hidden_size;
+            obj.output_size = network_config.output_size;
+            obj.dropout_rate = network_config.dropout_rate;
+            obj.sequence_length = network_config.sequence_length;
+
+            % Optional parameters with defaults
+            obj.num_layers = 2;  % Default to 2 LSTM layers
+
+            % Validate configuration
+            obj.validateConfiguration();
+        end
+
+        function validateConfiguration(obj)
+            % Validate network configuration parameters
+
+            % Check input size
+            validateattributes(obj.input_size, {'numeric'}, ...
+                {'positive', 'integer', 'scalar'}, ...
+                'LSTMNetwork/validateConfiguration', 'input_size');
+
+            % Check hidden size
+            validateattributes(obj.hidden_size, {'numeric'}, ...
+                {'positive', 'integer', 'scalar'}, ...
+                'LSTMNetwork/validateConfiguration', 'hidden_size');
+
+            % Check output size
+            validateattributes(obj.output_size, {'numeric'}, ...
+                {'positive', 'integer', 'scalar'}, ...
+                'LSTMNetwork/validateConfiguration', 'output_size');
+
+            % Check dropout rate
+            validateattributes(obj.dropout_rate, {'numeric'}, ...
+                {'>=', 0, '<', 1, 'scalar'}, ...
+                'LSTMNetwork/validateConfiguration', 'dropout_rate');
+
+            % Check sequence length
+            validateattributes(obj.sequence_length, {'numeric'}, ...
+                {'positive', 'integer', 'scalar'}, ...
+                'LSTMNetwork/validateConfiguration', 'sequence_length');
+
+            % Check number of layers
+            validateattributes(obj.num_layers, {'numeric'}, ...
+                {'positive', 'integer', 'scalar'}, ...
+                'LSTMNetwork/validateConfiguration', 'num_layers');
+        end
+
+        function [num_features, num_timesteps, batch_size] = validateInputSequence(obj, sequence)
+            % Validate input sequence dimensions
+
+            % Get dimensions
+            dims = size(sequence);
+
+            % Check number of dimensions
+            if numel(dims) < 2 || numel(dims) > 3
+                error('LSTMNetwork:InvalidInputDimensions', ...
+                    'Input must be 2D or 3D array (features × timesteps [× batch_size])');
+            end
+
+            % Extract dimensions
+            num_features = dims(1);
+            num_timesteps = dims(2);
+            batch_size = 1;
+            if numel(dims) == 3
+                batch_size = dims(3);
+            end
+
+            % Validate feature dimension
+            if num_features ~= obj.input_size
+                error('LSTMNetwork:InvalidFeatureCount', ...
+                    'Input has %d features but network expects %d', ...
+                    num_features, obj.input_size);
+            end
+
+            % Validate sequence length
+            if num_timesteps ~= obj.sequence_length
+                error('LSTMNetwork:InvalidSequenceLength', ...
+                    'Input has %d timesteps but network expects %d', ...
+                    num_timesteps, obj.sequence_length);
+            end
         end
     end
 end
